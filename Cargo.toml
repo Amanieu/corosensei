@@ -10,6 +10,7 @@ keywords = ["coroutine", "stack", "fiber", "generator"]
 categories = ["data-structures", "no-std", "concurrency"]
 exclude = [".github", "ci"]
 edition = "2021"
+rust-version = "1.59.0"
 
 [dependencies]
 cfg-if = "1.0.0"
@@ -59,7 +60,7 @@ targets = [
     "i686-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
     "armv7-unknown-linux-gnueabihf",
-    "riscv64-unknown-linux-gnu",
+    "riscv64gc-unknown-linux-gnu",
     "x86_64-apple-darwin",
     "aarch64-apple-darwin",
     "x86_64-pc-windows-msvc",
