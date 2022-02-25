@@ -1,5 +1,5 @@
 //! <p align="center">
-//! <img src="https://static.wikia.nocookie.net/assassinationclassroom/images/c/c5/Koro_sensei_transparent.png/revision/latest?cb=20161202043210" width="400"/>
+//! <img src="https://raw.githubusercontent.com/Amanieu/corosensei/master/assets/Koro_sensei_transparent.webp" width="400"/>
 //! </p>
 //!
 //! *WARNING: Abusing coroutines may result in tasty spaghetti code.*
