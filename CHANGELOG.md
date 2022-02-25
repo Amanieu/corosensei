@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2022-02-25
+
+- Fixed image in README and crate documentation.
+- Fixed RISC-V docs build on docs.rs. 
+
 ## [0.1.0] - 2022-02-25
 
 Initial release.
 
-[unreleased]: https://github.com/Amanieu/corosensei/compare/v0.1.0...HEAD
+[unreleased]: https://github.com/Amanieu/corosensei/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Amanieu/corosensei/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Amanieu/corosensei/releases/tag/v0.1.0
