@@ -1,0 +1,71 @@
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.target == 'i686-pc-windows-gnu' && format('{0}-i686-pc-windows-gnu', matrix.channel) || matrix.channel }}
+        target: ${{ matrix.target }}
+        override: true
+        components: rustfmt
+    - uses: actions-rs/cargo@v1
+      with:
+        command: fmt
+        args: --all -- --check
+    - env:
+        CHANNEL: ${{ matrix.channel }}
+        CROSS: ${{ !startsWith(matrix.target, 'x86_64') && contains(matrix.target, 'linux') && '1' || '0' }}
+        TARGET: ${{ matrix.target }}
+      run: sh ci/run.sh
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [
+          x86_64-unknown-linux-gnu,
+          i686-unknown-linux-gnu,
+          aarch64-unknown-linux-gnu,
+          armv7-unknown-linux-gnueabihf,
+          thumbv7neon-unknown-linux-gnueabihf,
+          x86_64-apple-darwin,
+          x86_64-pc-windows-gnu,
+          x86_64-pc-windows-msvc,
+          # Blocked on cross-rs updating its docker image:
+          # https://github.com/cross-rs/cross/pull/591
+          #riscv64gc-unknown-linux-gnu,
+          # Blocked on an LLVM bug with fastcall:
+          # https://reviews.llvm.org/D120382
+          #i686-pc-windows-gnu,
+          #i686-pc-windows-msvc,
+        ]
+        channel: [1.59.0, nightly]
+        include:
+        - target: x86_64-unknown-linux-gnu
+          os: ubuntu-latest
+        - target: i686-unknown-linux-gnu
+          os: ubuntu-latest
+        - target: aarch64-unknown-linux-gnu
+          os: ubuntu-latest
+        - target: armv7-unknown-linux-gnueabihf
+          os: ubuntu-latest
+        - target: thumbv7neon-unknown-linux-gnueabihf
+          os: ubuntu-latest
+        - target: x86_64-apple-darwin
+          os: macos-latest
+        - target: x86_64-pc-windows-msvc
+          os: windows-latest
+        - target: x86_64-pc-windows-gnu
+          os: windows-latest
+        #- target: riscv64gc-unknown-linux-gnu
+        #  os: ubuntu-latest
+        #- target: i686-pc-windows-msvc
+        #  os: windows-latest
+        #- target: i686-pc-windows-gnu
+        #  os: windows-latest

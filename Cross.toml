@@ -1,0 +1,8 @@
+# Cross doesn't have an image for thumbv7neon-unknown-linux-gnueabihf
+[target.thumbv7neon-unknown-linux-gnueabihf]
+image = "rustembedded/cross:armv7-unknown-linux-gnueabihf"
+[build.env]
+passthrough = [
+    "CARGO_TARGET_THUMBV7NEON_UNKNOWN_LINUX_GNUEABIHF_LINKER",
+    "CARGO_TARGET_THUMBV7NEON_UNKNOWN_LINUX_GNUEABIHF_RUNNER",
+]
