@@ -242,7 +242,7 @@ global_asm!(
     "str sp, [r1, #-8]!",
     // Switch to our stack while popping the padding and initial PC. This also
     // sets up r2 for the third argument to the initial function.
-    "add r2, r2, #12",
+    "adds r2, r2, #12",
     "mov sp, r2",
     // Set up the frame pointer to point at the parent link. This is needed for
     // the unwinding code below.
