@@ -168,8 +168,8 @@ global_asm!(
     // the unwinding code below.
     "mov rbp, rsi",
     // This sequence of magic numbers deserves some explanation. We need to tell
-    // the unwinder where to find the Call Frame Address (CFA) of the parent
-    // context.
+    // the unwinder where to find the Canonical Frame Address (CFA) of the
+    // parent context.
     //
     // The CFA is normally defined as the stack pointer value in the caller just
     // before executing the call instruction. In our case, this is the stack
