@@ -209,6 +209,7 @@ cfg_if::cfg_if! {
 }
 
 pub const STACK_ALIGNMENT: usize = 8;
+pub const PARENT_LINK_OFFSET: usize = 0;
 
 global_asm!(
     ".balign 4",

@@ -79,6 +79,7 @@ use crate::unwind::{
 use crate::util::EncodedValue;
 
 pub const STACK_ALIGNMENT: usize = 16;
+pub const PARENT_LINK_OFFSET: usize = 0;
 
 global_asm!(
     ".balign 16",

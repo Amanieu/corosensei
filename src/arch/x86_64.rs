@@ -109,6 +109,7 @@ use crate::unwind::{
 use crate::util::EncodedValue;
 
 pub const STACK_ALIGNMENT: usize = 16;
+pub const PARENT_LINK_OFFSET: usize = 0;
 
 // This is a pretty special function that has no real signature. Its use is to
 // be the "base" function of all coroutines. This entrypoint is used in

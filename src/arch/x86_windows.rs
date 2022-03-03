@@ -135,7 +135,8 @@ use crate::unwind::{
 };
 use crate::util::EncodedValue;
 
-pub(crate) const STACK_ALIGNMENT: usize = 4;
+pub const STACK_ALIGNMENT: usize = 4;
+pub const PARENT_LINK_OFFSET: usize = 0;
 
 // On MinGW, we emit DWARF CFI information so that it can be used by GDB to
 // reconstruct a backtrace. This isn't used for runtime unwinding (since we

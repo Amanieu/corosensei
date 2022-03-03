@@ -114,7 +114,8 @@ use crate::stack::{Stack, StackPointer, StackTebFields};
 use crate::unwind::{asm_may_unwind_root, asm_may_unwind_yield, InitialFunc, TrapHandler};
 use crate::util::EncodedValue;
 
-pub(crate) const STACK_ALIGNMENT: usize = 16;
+pub const STACK_ALIGNMENT: usize = 16;
+pub const PARENT_LINK_OFFSET: usize = 0;
 
 global_asm!(
     asm_function_begin!("stack_init_trampoline"),

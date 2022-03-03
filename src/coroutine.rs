@@ -501,9 +501,14 @@ impl<Input, Yield> Yielder<Input, Yield> {
         // thread.
         F: Send,
     {
+        // Get the top of the parent stack.
+        let stack_ptr = unsafe {
+            StackPointer::new_unchecked(self.stack_ptr.get().get() - arch::PARENT_LINK_OFFSET)
+        };
+
         // We just reuse the existing Coroutine infrastructure here with a
         // custom stack.
-        let mut stack = unsafe { ParentStack::new(self.stack_ptr.get()) };
+        let mut stack = unsafe { ParentStack::new(stack_ptr) };
         let mut coro =
             ScopedCoroutine::<(), Infallible, T, _>::with_stack(&mut stack, |_yielder, ()| f());
         match coro.resume(()) {

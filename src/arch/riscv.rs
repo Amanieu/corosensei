@@ -40,10 +40,10 @@
 //! | Padding   |
 //! +-----------+
 //! | Saved S1  |
-//! +-----------+
-//! | Saved PC  |
-//! +-----------+
-//! | Saved S0  |
+//! +-----------+  <- The parent link points to here instead of pointing to the
+//! | Saved PC  |     top of the stack. This matches the GCC/LLVM behavior of
+//! +-----------+     having the frame pointer point to the address above the
+//! | Saved S0  |     saved RA/FP.
 //! +-----------+
 //! ```
 //!
@@ -80,8 +80,6 @@ use crate::unwind::{
     InitialFunc, TrapHandler,
 };
 use crate::util::EncodedValue;
-
-pub const STACK_ALIGNMENT: usize = 16;
 
 // Helper macros to write assembly code that works on both RV32 and RV64.
 cfg_if::cfg_if! {
@@ -141,6 +139,9 @@ macro_rules! addi {
     };
 }
 
+pub const STACK_ALIGNMENT: usize = 16;
+pub const PARENT_LINK_OFFSET: usize = x!(8, 16);
+
 global_asm!(
     ".balign 4",
     asm_function_begin!("stack_init_trampoline"),
@@ -160,24 +161,32 @@ global_asm!(
     s!("s1", 2, "sp"),
     s!("ra", 1, "sp"),
     s!("s0", 0, "sp"),
-    // Write the parent stack pointer to the parent link and adjust A1 to point
-    // to the parent link.
-    s!("sp", -2, "a1"),
-    addi!("a1", "a1", -2),
-    // Switch to the coroutine stack and pop the padding and initial PC.
-    addi!("sp", "a2", 4),
-    // Set up the frame pointer to point at the parent link. This is needed for
+    // Write the parent stack pointer to the parent link. This is adjusted to
+    // point just above the saved PC/RA to match the GCC/LLVM ABI.
+    addi!("t0", "sp", 2),
+    s!("t0", -2, "a1"),
+    // Set up the frame pointer to point at the stack base. This is needed for
     // the unwinding code below.
     "mv s0, a1",
+    // Adjust A1 to point to the parent link.
+    addi!("a1", "a1", -2),
+    // Pop the padding and initial PC from the coroutine stack. This also sets
+    // up the 3rd argument to the initial function to point to the object that
+    // init_stack() set up on the stack.
+    addi!("a2", "a2", 4),
+    // Switch to the coroutine stack.
+    "mv sp, a2",
     // The actual meanings of the magic bytes are:
     // 0x0f: DW_CFA_def_cfa_expression
     // 5: byte length of the following DWARF expression
-    // 0x78 0x00: DW_OP_breg8 (s0 + 0)
+    // 0x78 0x78/0x70: DW_OP_breg8 (s0 - 8/16)
     // 0x06: DW_OP_deref
-    // 0x23, 0x10/0x20: DW_OP_plus_uconst 16/32
+    // 0x23, 0x08/0x10: DW_OP_plus_uconst 8/16
     concat!(
-        ".cfi_escape 0x0f, 5, 0x78, 0x00, 0x06, 0x23, ",
-        xlen_bytes!(4)
+        ".cfi_escape 0x0f, 5, 0x78, ",
+        x!("0x78", "0x70"),
+        ", 0x06, 0x23, ",
+        xlen_bytes!(2)
     ),
     // Now we can tell the unwinder how to restore the 3 registers that were
     // pushed on the parent stack. These are described as offsets from the CFA
@@ -185,9 +194,6 @@ global_asm!(
     concat!(".cfi_offset s1, ", xlen_bytes!(-2)),
     concat!(".cfi_offset ra, ", xlen_bytes!(-3)),
     concat!(".cfi_offset s0, ", xlen_bytes!(-4)),
-    // Set up the 3rd argument to the initial function to point to the object
-    // that init_stack() set up on the stack.
-    "mv a2, sp",
     // As in the original x86_64 code, hand-write the call operation so that it
     // doesn't push an entry into the CPU's return prediction stack.
     concat!("lla ra, ", asm_mangle!("stack_init_trampoline_return")),
@@ -266,13 +272,13 @@ pub unsafe fn switch_and_link(
         "jalr t0",
 
         // Upon returning, our register state contains the following:
-        // - A2: Our stack pointer.
+        // - A2: Our stack pointer + 2 words.
         // - A1: The top of the coroutine stack, or 0 if coming from
         //       switch_and_reset.
         // - A0: The argument passed from the coroutine.
 
         // Switch back to our stack and free the saved registers.
-        addi!("sp", "a2", 4),
+        addi!("sp", "a2", 2),
 
         // Pass the argument in A0.
         inlateout("a0") arg => ret_val,
@@ -321,9 +327,9 @@ pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) ->
         "mv a1, sp",
 
         // Restore S0, S1 and RA from the parent stack.
-        l!("s1", 2, "a2"),
-        l!("ra", 1, "a2"),
-        l!("s0", 0, "a2"),
+        l!("s1", 0, "a2"),
+        l!("ra", -1, "a2"),
+        l!("s0", -2, "a2"),
 
         // DW_CFA_GNU_args_size 0
         //
@@ -356,8 +362,10 @@ pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) ->
         s!("ra", 1, "sp"),
         s!("s0", 0, "sp"),
 
-        // Write the parent stack pointer to the parent link.
-        s!("sp", -2, "a1"),
+        // Write the parent stack pointer to the parent link. This is adjusted
+        // to point just above the saved PC/RA to match the GCC/LLVM ABI.
+        addi!("t0", "sp", 2),
+        s!("t0", -2, "a1"),
 
         // Load our S0 and S1 values from the coroutine stack.
         l!("s1", 1, "a2"),
@@ -396,9 +404,9 @@ pub unsafe fn switch_and_reset(arg: EncodedValue, parent_link: *mut StackPointer
         l!("a2", 0, "{parent_link}"),
 
         // Restore S0, S1 and RA from the parent stack.
-        l!("s0", 0, "a2"),
-        l!("ra", 1, "a2"),
-        l!("s1", 2, "a2"),
+        l!("s1", 0, "a2"),
+        l!("ra", -1, "a2"),
+        l!("s0", -2, "a2"),
 
         // Return into the parent context
         "ret",
@@ -440,8 +448,10 @@ pub unsafe fn switch_and_throw(
         s!("ra", 1, "sp"),
         s!("s0", 0, "sp"),
 
-        // Update the parent link near the base of the coroutine stack.
-        s!("sp", -2, "a1"),
+        // Write the parent stack pointer to the parent link. This is adjusted
+        // to point just above the saved PC/RA to match the GCC/LLVM ABI.
+        addi!("t1", "sp", 2),
+        s!("t1", -2, "a1"),
 
         // Load the coroutine registers, with the saved PC into RA.
         l!("ra", 2, "t0"),
@@ -462,7 +472,7 @@ pub unsafe fn switch_and_throw(
         "0:",
 
         // Switch back to our stack and free the saved registers.
-        addi!("sp", "a2", 4),
+        addi!("sp", "a2", 2),
 
         // Helper function to trigger stack unwinding.
         throw = sym throw,
@@ -550,6 +560,6 @@ pub unsafe fn setup_trap_trampoline<T>(
         sp,
         a0: val_ptr,
         a1: parent_link,
-        s0: parent_link,
+        s0: stack_base.get(),
     }
 }
