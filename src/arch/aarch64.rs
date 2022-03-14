@@ -76,7 +76,7 @@ use super::{allocate_obj_on_stack, push};
 use crate::stack::{Stack, StackPointer};
 use crate::unwind::{
     asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size_root, cfi_reset_args_size_yield,
-    InitialFunc, TrapHandler,
+    InitialFunc, StackCallFunc, TrapHandler,
 };
 use crate::util::EncodedValue;
 
@@ -142,9 +142,47 @@ global_asm!(
     asm_function_end!("stack_init_trampoline"),
 );
 
+global_asm!(
+    // See stack_init_trampoline for an explanation of the assembler directives
+    // used here.
+    ".balign 4",
+    asm_function_begin!("stack_call_trampoline"),
+    ".cfi_startproc",
+    cfi_signal_frame!(),
+    // At this point our register state contains the following:
+    // - SP points to the top of the parent stack.
+    // - X29 holds its value from the parent context.
+    // - X2 is the function that should be called.
+    // - X1 points to the top of our stack.
+    // - X0 contains the argument to be passed to the function.
+    //
+    // Create a stack frame and point the frame pointer at it.
+    "stp x29, x30, [sp, #-16]!",
+    "mov x29, sp",
+    ".cfi_def_cfa x29, 16",
+    ".cfi_offset x30, -8",
+    ".cfi_offset x29, -16",
+    // Switch to the new stack.
+    "mov sp, x1",
+    // Call the function pointer. The argument is already in the correct
+    // register for the function.
+    "blr x2",
+    // Switch back to the original stack by restoring from the frame pointer,
+    // then return.
+    "mov sp, x29",
+    "ldp x29, x30, [sp], #16",
+    "ret",
+    ".cfi_endproc",
+    asm_function_end!("stack_call_trampoline"),
+);
+
+// These trampolines use a custom calling convention and should only be called
+// with inline assembly.
 extern "C" {
-    fn stack_init_trampoline();
+    fn stack_init_trampoline(arg: EncodedValue, stack_base: StackPointer, stack_ptr: StackPointer);
     fn stack_init_trampoline_return();
+    #[allow(dead_code)]
+    fn stack_call_trampoline(arg: *mut u8, sp: StackPointer, f: StackCallFunc);
 }
 
 #[inline]
@@ -476,4 +514,25 @@ pub unsafe fn setup_trap_trampoline<T>(
         x29: parent_link as u64,
         lr: stack_init_trampoline_return as u64,
     }
+}
+
+/// This function executes a function on the given stack. The argument is passed
+/// through to the called function.
+#[inline]
+pub unsafe fn on_stack(arg: *mut u8, stack: impl Stack, f: StackCallFunc) {
+    // This is a bit subtle: because we use .cfi_signal_frame in the trampoline,
+    // the unwinder will look for unwinding information at the instruction
+    // after the return address. Normal compiler code generation does not
+    // expect this and may generate incorrect entries in the exception handling
+    // table. We work around this by adding a NOP instruction after the call.
+    asm_may_unwind_root!(
+        // DW_CFA_GNU_args_size 0
+        cfi_reset_args_size_root!(),
+        concat!("bl ", asm_mangle!("stack_call_trampoline")),
+        "nop",
+        in("x0") arg,
+        in("x1") stack.base().get(),
+        in("x2") f,
+        clobber_abi("C"),
+    );
 }

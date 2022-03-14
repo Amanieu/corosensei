@@ -91,6 +91,7 @@ cfg_if::cfg_if! {
                     val: *mut T,
                     parent_link: *mut StackPointer,
                 ) -> !;
+                pub type StackCallFunc = unsafe extern "sysv64-unwind" fn(ptr: *mut u8);
                 macro_rules! initial_func_abi {
                     (unsafe fn $($tt:tt)*) => {
                         unsafe extern "sysv64-unwind" fn $($tt)*
@@ -108,6 +109,7 @@ cfg_if::cfg_if! {
                     val: *mut T,
                     parent_link: *mut StackPointer,
                 ) -> !;
+                pub type StackCallFunc = unsafe extern "fastcall-unwind" fn(ptr: *mut u8);
                 macro_rules! initial_func_abi {
                     (unsafe fn $($tt:tt)*) => {
                         unsafe extern "fastcall-unwind" fn $($tt)*
@@ -121,6 +123,7 @@ cfg_if::cfg_if! {
                 ) -> !;
                 pub type TrapHandler<T> =
                     unsafe extern "C-unwind" fn(val: *mut T, parent_link: *mut StackPointer) -> !;
+                pub type StackCallFunc = unsafe extern "C-unwind" fn(ptr: *mut u8);
                 macro_rules! initial_func_abi {
                     (unsafe fn $($tt:tt)*) => {
                         unsafe extern "C-unwind" fn $($tt)*
@@ -153,6 +156,7 @@ cfg_if::cfg_if! {
                 ) -> !;
                 pub type TrapHandler<T> =
                     unsafe extern "sysv64" fn(val: *mut T, parent_link: *mut StackPointer) -> !;
+                pub type StackCallFunc = unsafe extern "sysv64" fn(ptr: *mut u8);
                 macro_rules! initial_func_abi {
                     (unsafe fn $($tt:tt)*) => {
                         unsafe extern "sysv64" fn $($tt)*
@@ -168,6 +172,7 @@ cfg_if::cfg_if! {
                 ) -> !;
                 pub type TrapHandler<T> =
                     unsafe extern "fastcall" fn(val: *mut T, parent_link: *mut StackPointer) -> !;
+                pub type StackCallFunc = unsafe extern "fastcall" fn(ptr: *mut u8);
                 macro_rules! initial_func_abi {
                     (unsafe fn $($tt:tt)*) => {
                         unsafe extern "fastcall" fn $($tt)*
@@ -181,6 +186,7 @@ cfg_if::cfg_if! {
                 ) -> !;
                 pub type TrapHandler<T> =
                     unsafe extern "C" fn(val: *mut T, parent_link: *mut StackPointer) -> !;
+                pub type StackCallFunc = unsafe extern "C" fn(ptr: *mut u8);
                 macro_rules! initial_func_abi {
                     (unsafe fn $($tt:tt)*) => {
                         unsafe extern "C" fn $($tt)*
@@ -238,19 +244,13 @@ cfg_if::cfg_if! {
 
         #[inline]
         pub fn catch_unwind_at_root<T, F: FnOnce() -> T>(f: F) -> Result<T, CaughtPanic> {
-            struct PanicGuard;
-            impl Drop for PanicGuard {
-                fn drop(&mut self) {
-                    // We can't catch panics in #![no_std], force an abort using
-                    // a double-panic. Add a recursive panic guard just in case
-                    // to ensure this function never returns with or without
-                    // unwinding.
-                    let _guard = PanicGuard;
-                    panic!("cannot propagte coroutine panic with #![no_std]");
-                }
-            }
-
-            let guard = PanicGuard;
+            let guard = scopeguard::guard((), |()| {
+                // We can't catch panics in #![no_std], force an abort using
+                // a double-panic. Add a recursive panic guard just in case
+                // to ensure this function never returns with or without
+                // unwinding.
+                panic!("cannot propagte coroutine panic with #![no_std]");
+            });
             let result = f();
             core::mem::forget(guard);
             Ok(result)

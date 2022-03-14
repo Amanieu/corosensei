@@ -131,7 +131,8 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use super::{allocate_obj_on_stack, push};
 use crate::stack::{Stack, StackPointer, StackTebFields};
 use crate::unwind::{
-    asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size_yield, InitialFunc, TrapHandler,
+    asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size_yield, InitialFunc,
+    StackCallFunc, TrapHandler,
 };
 use crate::util::EncodedValue;
 
@@ -156,6 +157,7 @@ cfg_if::cfg_if! {
 }
 
 global_asm!(
+    ".balign 16",
     asm_function_begin!("stack_init_trampoline"),
     dwarf!(".cfi_startproc"),
     dwarf!(".cfi_signal_frame"),
@@ -224,9 +226,69 @@ global_asm!(
     asm_function_end!("stack_init_trampoline"),
 );
 
+global_asm!(
+    // See stack_init_trampoline for an explanation of the assembler directives
+    // used here.
+    ".balign 16",
+    asm_function_begin!("stack_call_trampoline"),
+    dwarf!(".cfi_startproc"),
+    dwarf!(".cfi_signal_frame"),
+    // At this point our register state contains the following:
+    // - ESP points to the top of the parent stack.
+    // - EBP holds its value from the parent context.
+    // - EAX is the function that should be called.
+    // - EDX points to the top of our stack.
+    // - ECX contains the argument to be passed to the function.
+    //
+    // Create a stack frame and point the frame pointer at it.
+    "push ebp",
+    "mov ebp, esp",
+    dwarf!(".cfi_def_cfa ebp, 8"),
+    dwarf!(".cfi_offset ebp, -8"),
+    // Save the TEB fields to the stack.
+    "push dword ptr fs:[0xf78]", // GuaranteedStackBytes
+    "push dword ptr fs:[0xe0c]", // DeallocationStack
+    "push dword ptr fs:[0x8]",   // StackLimit
+    "push dword ptr fs:[0x4]",   // StackBase
+    "push dword ptr fs:[0x0]",   // ExceptionList
+    // Switch to the new stack.
+    "mov esp, edx",
+    // Pop the TEB fields for our new stack.
+    "pop dword ptr fs:[0x4]",   // StackBase
+    "pop dword ptr fs:[0x8]",   // StackLimit
+    "pop dword ptr fs:[0xe0c]", // DeallocationStack
+    "pop dword ptr fs:[0xf78]", // GuaranteedStackBytes
+    // At this point ESP points to the initial SEH exception handler record.
+    // Set it up in the TEB.
+    "mov fs:[0x0], esp",
+    // Call the function pointer. The argument is already in the correct
+    // register for the function.
+    "call eax",
+    // Save the two mutable TEB fields to the stack base so they can be
+    // retrieved later.
+    "push dword ptr fs:[0x8]",   // StackLimit
+    "push dword ptr fs:[0xf78]", // GuaranteedStackBytes
+    // Switch back to the original stack by restoring from the frame pointer,
+    // then return.
+    "lea esp, [ebp - 20]",
+    "pop dword ptr fs:[0x0]",   // ExceptionList
+    "pop dword ptr fs:[0x4]",   // StackBase
+    "pop dword ptr fs:[0x8]",   // StackLimit
+    "pop dword ptr fs:[0xe0c]", // DeallocationStack
+    "pop dword ptr fs:[0xf78]", // GuaranteedStackBytes
+    "pop ebp",
+    "ret",
+    dwarf!(".cfi_endproc"),
+    asm_function_end!("stack_call_trampoline"),
+);
+
+// These trampolines use a custom calling convention and should only be called
+// with inline assembly.
 extern "C" {
-    fn stack_init_trampoline();
+    fn stack_init_trampoline(arg: EncodedValue, stack_base: StackPointer, stack_ptr: StackPointer);
     fn stack_init_trampoline_return();
+    #[allow(dead_code)]
+    fn stack_call_trampoline(arg: *mut u8, sp: StackPointer, f: StackCallFunc);
 }
 
 /// The end of the exception handler chain is marked with 0xffffffff.
@@ -722,6 +784,45 @@ pub unsafe fn setup_trap_trampoline<T>(
         edx: parent_link as u32,
         ebp: parent_link as u32,
     }
+}
+
+/// This function executes a function on the given stack. The argument is passed
+/// through to the called function.
+#[inline]
+pub unsafe fn on_stack<S: Stack>(arg: *mut u8, stack: S, f: StackCallFunc) {
+    let stack = scopeguard::guard(stack, |mut stack| {
+        let base = stack.base().get() as *const usize;
+        let stack_limit = *base.sub(4);
+        let guaranteed_stack_bytes = *base.sub(5);
+        stack.update_teb_fields(stack_limit, guaranteed_stack_bytes);
+    });
+
+    // Set up the values on the new stack.
+    let mut sp = stack.base().get();
+
+    // Add 4 bytes of padding for SAFESEH which requires that the exception
+    // handler record does not extend all the way to the stack base.
+    push(&mut sp, None);
+
+    // Set up the initial SEH exception handler record. This must point to
+    // FinalExceptionHandler in ntdll.dll for compatibility with SEHOP.
+    push(&mut sp, Some(ntdll_final_exception_handler() as StackWord));
+    push(&mut sp, Some(EXCEPTION_LIST_END as StackWord));
+
+    // Write the TEB fields for the target stack.
+    let teb = stack.teb_fields();
+    push(&mut sp, Some(teb.GuaranteedStackBytes as StackWord));
+    push(&mut sp, Some(teb.DeallocationStack as StackWord));
+    push(&mut sp, Some(teb.StackLimit as StackWord));
+    push(&mut sp, Some(teb.StackBase as StackWord));
+
+    asm_may_unwind_root!(
+        concat!("call ", asm_mangle!("stack_call_trampoline")),
+        in("ecx") arg,
+        in("edx") sp,
+        in("eax") f,
+        clobber_abi("fastcall"),
+    );
 }
 
 /// The trap handler will have reset our stack offset back to the base of the

@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::convert::Infallible;
 use core::hint::unreachable_unchecked;
 use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
@@ -440,16 +439,11 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack> Drop
     for ScopedCoroutine<'a, Input, Yield, Return, Stack>
 {
     fn drop(&mut self) {
-        struct PanicGuard;
-        impl Drop for PanicGuard {
-            fn drop(&mut self) {
-                // We can't catch panics in #![no_std], force an abort using
-                // a double-panic.
-                panic!("cannot propagte coroutine panic with #![no_std]");
-            }
-        }
-
-        let guard = PanicGuard;
+        let guard = scopeguard::guard((), |()| {
+            // We can't catch panics in #![no_std], force an abort using
+            // a double-panic.
+            panic!("cannot propagte coroutine panic with #![no_std]");
+        });
         self.force_unwind();
         mem::forget(guard);
 
@@ -493,9 +487,14 @@ impl<Input, Yield> Yielder<Input, Yield> {
     /// This is particularly useful when executing on a coroutine with limited
     /// stack space: stack-heavy operations can be performed in a way that
     /// avoids stack overflows on the coroutine stack.
-    pub fn on_parent_stack<F, T>(&self, f: F) -> T
+    ///
+    /// # Panics
+    ///
+    /// Any panics in the provided closure are automatically propagated back up
+    /// to the caller of this function.
+    pub fn on_parent_stack<F, R>(&self, f: F) -> R
     where
-        F: FnOnce() -> T,
+        F: FnOnce() -> R,
         // The F: Send bound here is somewhat subtle but important. It exists to
         // prevent references to the Yielder from being passed into the parent
         // thread.
@@ -506,15 +505,59 @@ impl<Input, Yield> Yielder<Input, Yield> {
             StackPointer::new_unchecked(self.stack_ptr.get().get() - arch::PARENT_LINK_OFFSET)
         };
 
-        // We just reuse the existing Coroutine infrastructure here with a
-        // custom stack.
-        let mut stack = unsafe { ParentStack::new(stack_ptr) };
-        let mut coro =
-            ScopedCoroutine::<(), Infallible, T, _>::with_stack(&mut stack, |_yielder, ()| f());
-        match coro.resume(()) {
-            CoroutineResult::Yield(_) => unreachable!(),
-            CoroutineResult::Return(result) => result,
+        // Create a virtual stack that starts below the parent stack.
+        let stack = unsafe { ParentStack::new(stack_ptr) };
+
+        on_stack(stack, f)
+    }
+}
+
+/// Executes some code on the given stack.
+///
+/// This is useful when running with limited stack space: stack-intensive
+/// computation can be executed on a separate stack with more space.
+///
+/// # Panics
+///
+/// Any panics in the provided closure are automatically propagated back up to
+/// the caller of this function.
+pub fn on_stack<F, R>(stack: impl stack::Stack, f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    // Union to hold both the function and its result.
+    union FuncOrResult<F, R> {
+        func: ManuallyDrop<F>,
+        result: ManuallyDrop<Result<R, CaughtPanic>>,
+    }
+
+    initial_func_abi! {
+        unsafe fn wrapper<F, R>(ptr: *mut u8)
+        where
+            F: FnOnce() -> R,
+        {
+            // Read the function out of the union.
+            let data = &mut *(ptr as *mut FuncOrResult<F, R>);
+            let func = ManuallyDrop::take(&mut data.func);
+
+            // Call it.
+            let result = unwind::catch_unwind_at_root(func);
+
+            // And write the result back to the union.
+            data.result = ManuallyDrop::new(result);
         }
+    }
+
+    unsafe {
+        let mut data = FuncOrResult {
+            func: ManuallyDrop::new(f),
+        };
+
+        // Call the wrapper function on the new stack.
+        arch::on_stack(&mut data as *mut _ as *mut u8, stack, wrapper::<F, R>);
+
+        // Re-throw any panics if one was caught.
+        unwind::maybe_resume_unwind(ManuallyDrop::take(&mut data.result))
     }
 }
 

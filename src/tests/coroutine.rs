@@ -74,7 +74,7 @@ fn backtrace_traces_to_host() {
         let mut coroutine = Coroutine::<(), (), ()>::new(move |y, ()| {
             assert_contains_host();
             y.suspend(());
-            assert_contains_host();
+            y.on_parent_stack(|| assert_contains_host());
             y.suspend(());
             assert_contains_host();
         });
@@ -97,6 +97,34 @@ fn panics_propagated() {
     let mut coroutine = Coroutine::<(), (), ()>::new(move |_, ()| {
         drop(&b);
         panic!("foobar");
+    });
+    let result = panic::catch_unwind(AssertUnwindSafe(|| coroutine.resume(())));
+    assert!(result.is_err());
+    assert!(a.get());
+    panic::resume_unwind(result.unwrap_err());
+
+    struct SetOnDrop(Rc<Cell<bool>>);
+
+    impl Drop for SetOnDrop {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+}
+
+#[cfg(feature = "unwind")]
+#[test]
+#[should_panic(expected = "foobar")]
+fn panics_propagated_via_parent() {
+    use std::panic::{self, AssertUnwindSafe};
+
+    let a = Rc::new(Cell::new(false));
+    let b = SetOnDrop(a.clone());
+    let mut coroutine = Coroutine::<(), (), ()>::new(move |y, ()| {
+        drop(&b);
+        y.on_parent_stack(|| {
+            panic!("foobar");
+        });
     });
     let result = panic::catch_unwind(AssertUnwindSafe(|| coroutine.resume(())));
     assert!(result.is_err());

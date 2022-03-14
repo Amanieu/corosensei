@@ -111,7 +111,9 @@ use core::arch::{asm, global_asm};
 
 use super::{allocate_obj_on_stack, push};
 use crate::stack::{Stack, StackPointer, StackTebFields};
-use crate::unwind::{asm_may_unwind_root, asm_may_unwind_yield, InitialFunc, TrapHandler};
+use crate::unwind::{
+    asm_may_unwind_root, asm_may_unwind_yield, InitialFunc, StackCallFunc, TrapHandler,
+};
 use crate::util::EncodedValue;
 
 pub const STACK_ALIGNMENT: usize = 16;
@@ -119,6 +121,7 @@ pub const PARENT_LINK_OFFSET: usize = 0;
 pub type StackWord = u64;
 
 global_asm!(
+    ".balign 16",
     asm_function_begin!("stack_init_trampoline"),
     ".seh_proc stack_init_trampoline",
     // At this point our register state contains the following:
@@ -210,9 +213,76 @@ global_asm!(
     asm_function_end!("stack_init_trampoline"),
 );
 
+global_asm!(
+    // See stack_init_trampoline for an explanation of the assembler directives
+    // used here.
+    ".balign 16",
+    asm_function_begin!("stack_call_trampoline"),
+    ".seh_proc stack_call_trampoline",
+    // At this point our register state contains the following:
+    // - RSP points to the top of the parent stack.
+    // - RBP holds its value from the parent context.
+    // - RDX is the function that should be called.
+    // - RSI points to the top of our stack.
+    // - RDI contains the argument to be passed to the function.
+    // - R8-R11 contains the TEB fields for the new stack.
+    //
+    // Save RBP.
+    "push rbp",
+    ".seh_pushreg rbp",
+    // Save the TEB fields to the stack.
+    "push qword ptr gs:[0x1748]", // GuaranteedStackBytes
+    ".seh_stackalloc 8",
+    "push qword ptr gs:[0x1478]", // DeallocationStack
+    ".seh_stackalloc 8",
+    "push qword ptr gs:[0x10]", // StackLimit
+    ".seh_stackalloc 8",
+    "push qword ptr gs:[0x8]", // StackBase
+    ".seh_stackalloc 8",
+    "push qword ptr gs:[0x0]", // ExceptionList
+    ".seh_stackalloc 8",
+    // Set up a stack frame.
+    "mov rbp, rsp",
+    ".seh_setframe rbp, 0",
+    ".seh_endprologue",
+    // Switch to the new stack.
+    "mov rsp, rsi",
+    // Reset the ExceptionList field of the TEB. This is not used on Win64 but
+    // it *is* used by Wine. The end-of-chain value is !0.
+    "mov qword ptr gs:[0x0], 0xffffffffffffffff",
+    // Set the TEB fields for the new stack.
+    "mov gs:[0x8], r8",     // StackBase
+    "mov gs:[0x10], r9",    // StackLimit
+    "mov gs:[0x1478], r10", // DeallocationStack
+    "mov gs:[0x1748], r11", // GuaranteedStackBytes
+    // Call the function pointer. The argument is already in the correct
+    // register for the function.
+    "call rdx",
+    // Save the two mutable TEB fields to the stack base so they can be
+    // retrieved later.
+    "push qword ptr gs:[0x10]",   // StackLimit
+    "push qword ptr gs:[0x1748]", // GuaranteedStackBytes
+    // Switch back to the original stack by restoring from the frame pointer,
+    // then return.
+    "mov rsp, rbp",
+    "pop qword ptr gs:[0x0]",    // ExceptionList
+    "pop qword ptr gs:[0x8]",    // StackBase
+    "pop qword ptr gs:[0x10]",   // StackLimit
+    "pop qword ptr gs:[0x1478]", // DeallocationStack
+    "pop qword ptr gs:[0x1748]", // GuaranteedStackBytes
+    "pop rbp",
+    "ret",
+    ".seh_endproc",
+    asm_function_end!("stack_call_trampoline"),
+);
+
+// These trampolines use a custom calling convention and should only be called
+// with inline assembly.
 extern "C" {
-    fn stack_init_trampoline();
+    fn stack_init_trampoline(arg: EncodedValue, stack_base: StackPointer, stack_ptr: StackPointer);
     fn stack_init_trampoline_return();
+    #[allow(dead_code)]
+    fn stack_call_trampoline(arg: *mut u8, sp: StackPointer, f: StackCallFunc);
 }
 
 #[inline]
@@ -624,4 +694,30 @@ pub unsafe fn setup_trap_trampoline<T>(
         rsi: parent_link as u64,
         rbp: parent_link as u64,
     }
+}
+
+/// This function executes a function on the given stack. The argument is passed
+/// through to the called function.
+#[inline]
+pub unsafe fn on_stack<S: Stack>(arg: *mut u8, stack: S, f: StackCallFunc) {
+    let stack = scopeguard::guard(stack, |mut stack| {
+        let base = stack.base().get() as *const u64;
+        let stack_limit = *base.sub(1) as usize;
+        let guaranteed_stack_bytes = *base.sub(2) as usize;
+        stack.update_teb_fields(stack_limit, guaranteed_stack_bytes);
+    });
+
+    let teb_fields = stack.teb_fields();
+
+    asm_may_unwind_root!(
+        concat!("call ", asm_mangle!("stack_call_trampoline")),
+        in("rdi") arg,
+        in("rsi") stack.base().get(),
+        in("rdx") f,
+        in("r8") teb_fields.StackBase,
+        in("r9") teb_fields.StackLimit,
+        in("r10") teb_fields.DeallocationStack,
+        in("r11") teb_fields.GuaranteedStackBytes,
+        clobber_abi("sysv64"),
+    );
 }
