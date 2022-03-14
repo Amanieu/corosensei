@@ -128,7 +128,7 @@
 use core::arch::{asm, global_asm};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use super::allocate_obj_on_stack;
+use super::{allocate_obj_on_stack, push};
 use crate::stack::{Stack, StackPointer, StackTebFields};
 use crate::unwind::{
     asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size_yield, InitialFunc, TrapHandler,
@@ -137,6 +137,7 @@ use crate::util::EncodedValue;
 
 pub const STACK_ALIGNMENT: usize = 4;
 pub const PARENT_LINK_OFFSET: usize = 0;
+pub type StackWord = u32;
 
 // On MinGW, we emit DWARF CFI information so that it can be used by GDB to
 // reconstruct a backtrace. This isn't used for runtime unwinding (since we
@@ -278,21 +279,13 @@ fn ntdll_final_exception_handler() -> usize {
 
 #[inline]
 pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) -> StackPointer {
-    #[inline]
-    unsafe fn push(sp: &mut usize, val: Option<usize>) {
-        *sp -= 4;
-        if let Some(val) = val {
-            *(*sp as *mut usize) = val;
-        }
-    }
-
     let mut sp = stack.base().get();
 
     // Placeholder for returning TEB.StackLimit.
     push(&mut sp, None);
 
     // Initial function.
-    push(&mut sp, Some(func as usize));
+    push(&mut sp, Some(func as StackWord));
 
     // Set up a proper "fake" return address for the frame pointer chain. We
     // just point it back at stack_init_trampoline_return to ensure that the
@@ -302,15 +295,15 @@ pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) ->
     // This is only needed on x86 Windows because this is the only platform
     // where the stack walker will alternate between looking at the frame
     // pointer chain and looking up FPO unwinding information in a PDB.
-    push(&mut sp, Some(stack_init_trampoline_return as usize));
+    push(&mut sp, Some(stack_init_trampoline_return as StackWord));
 
     // Placeholder for parent link.
     push(&mut sp, None);
 
     // Set up the initial SEH exception handler record. This must point to
     // FinalExceptionHandler in ntdll.dll for compatibility with SEHOP.
-    push(&mut sp, Some(ntdll_final_exception_handler()));
-    push(&mut sp, Some(EXCEPTION_LIST_END));
+    push(&mut sp, Some(ntdll_final_exception_handler() as StackWord));
+    push(&mut sp, Some(EXCEPTION_LIST_END as StackWord));
     let initial_seh_handler = sp;
 
     // Allocate space on the stack for the initial object, rounding to
@@ -319,18 +312,18 @@ pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) ->
     let initial_obj = sp;
 
     // Set up the stack for the 3rd argument to the initial function.
-    push(&mut sp, Some(initial_obj));
+    push(&mut sp, Some(initial_obj as StackWord));
 
     // Write the TEB fields for the target stack.
     let teb = stack.teb_fields();
-    push(&mut sp, Some(teb.GuaranteedStackBytes));
-    push(&mut sp, Some(teb.DeallocationStack));
-    push(&mut sp, Some(teb.StackLimit));
-    push(&mut sp, Some(teb.StackBase));
-    push(&mut sp, Some(initial_seh_handler));
+    push(&mut sp, Some(teb.GuaranteedStackBytes as StackWord));
+    push(&mut sp, Some(teb.DeallocationStack as StackWord));
+    push(&mut sp, Some(teb.StackLimit as StackWord));
+    push(&mut sp, Some(teb.StackBase as StackWord));
+    push(&mut sp, Some(initial_seh_handler as StackWord));
 
     // Entry point called by switch_and_link().
-    push(&mut sp, Some(stack_init_trampoline as usize));
+    push(&mut sp, Some(stack_init_trampoline as StackWord));
 
     StackPointer::new_unchecked(sp)
 }
@@ -633,8 +626,8 @@ pub unsafe fn drop_initial_obj(
 
     // Also copy the TEB fields to the base of the stack so that they can be
     // retreived by update_stack_teb_fields().
-    let base = stack_base.get() as *mut usize;
-    let stack = stack_ptr.get() as *const usize;
+    let base = stack_base.get() as *mut StackWord;
+    let stack = stack_ptr.get() as *const StackWord;
     *base.sub(1) = *stack.add(3); // StackLimit
     *base.sub(2) = *stack.add(5); // GuaranteedStackBytes
 }
@@ -645,9 +638,9 @@ pub unsafe fn drop_initial_obj(
 /// another coroutine.
 #[inline]
 pub unsafe fn update_stack_teb_fields(stack: &mut impl Stack) {
-    let base = stack.base().get() as *const usize;
-    let stack_limit = *base.sub(1);
-    let guaranteed_stack_bytes = *base.sub(2);
+    let base = stack.base().get() as *const StackWord;
+    let stack_limit = *base.sub(1) as usize;
+    let guaranteed_stack_bytes = *base.sub(2) as usize;
     stack.update_teb_fields(stack_limit, guaranteed_stack_bytes);
 }
 
@@ -655,12 +648,12 @@ pub unsafe fn update_stack_teb_fields(stack: &mut impl Stack) {
 /// saved on the parent stack.
 #[inline]
 pub unsafe fn read_parent_stack_teb_fields(stack_ptr: StackPointer) -> StackTebFields {
-    let stack_ptr = stack_ptr.get() as *const usize;
+    let stack_ptr = stack_ptr.get() as *const StackWord;
     StackTebFields {
-        StackBase: *stack_ptr.add(4),
-        StackLimit: *stack_ptr.add(5),
-        DeallocationStack: *stack_ptr.add(6),
-        GuaranteedStackBytes: *stack_ptr.add(7),
+        StackBase: *stack_ptr.add(4) as usize,
+        StackLimit: *stack_ptr.add(5) as usize,
+        DeallocationStack: *stack_ptr.add(6) as usize,
+        GuaranteedStackBytes: *stack_ptr.add(7) as usize,
     }
 }
 
@@ -672,9 +665,9 @@ pub unsafe fn update_parent_stack_teb_fields(
     stack_limit: usize,
     guaranteed_stack_bytes: usize,
 ) {
-    let stack_ptr = stack_ptr.get() as *mut usize;
-    *stack_ptr.add(5) = stack_limit;
-    *stack_ptr.add(7) = guaranteed_stack_bytes;
+    let stack_ptr = stack_ptr.get() as *mut StackWord;
+    *stack_ptr.add(5) = stack_limit as StackWord;
+    *stack_ptr.add(7) = guaranteed_stack_bytes as StackWord;
 }
 
 /// Registers which must be updated upon return from a trap handler.
@@ -719,8 +712,7 @@ pub unsafe fn setup_trap_trampoline<T>(
     let val_ptr = sp;
 
     // Set up a return address which returns to stack_init_trampoline.
-    sp -= 4;
-    *(sp as *mut u32) = stack_init_trampoline_return as u32;
+    push(&mut sp, Some(stack_init_trampoline_return as StackWord));
 
     // Set up registers for entry into the function.
     TrapHandlerRegs {

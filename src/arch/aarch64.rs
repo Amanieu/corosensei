@@ -72,7 +72,7 @@
 
 use core::arch::{asm, global_asm};
 
-use super::allocate_obj_on_stack;
+use super::{allocate_obj_on_stack, push};
 use crate::stack::{Stack, StackPointer};
 use crate::unwind::{
     asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size_root, cfi_reset_args_size_yield,
@@ -82,6 +82,7 @@ use crate::util::EncodedValue;
 
 pub const STACK_ALIGNMENT: usize = 16;
 pub const PARENT_LINK_OFFSET: usize = 0;
+pub type StackWord = u64;
 
 global_asm!(
     ".balign 4",
@@ -148,19 +149,10 @@ extern "C" {
 
 #[inline]
 pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) -> StackPointer {
-    // ILP32 uses 64-bit stack slots even though usize is 32-bit.
-    #[inline]
-    unsafe fn push(sp: &mut usize, val: Option<u64>) {
-        *sp -= 8;
-        if let Some(val) = val {
-            *(*sp as *mut u64) = val;
-        }
-    }
-
     let mut sp = stack.base().get();
 
     // Initial function.
-    push(&mut sp, Some(func as u64));
+    push(&mut sp, Some(func as StackWord));
 
     // Placeholder for parent link.
     push(&mut sp, None);
@@ -176,7 +168,7 @@ pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) ->
     push(&mut sp, None);
 
     // Entry point called by switch_and_link().
-    push(&mut sp, Some(stack_init_trampoline as u64));
+    push(&mut sp, Some(stack_init_trampoline as StackWord));
 
     // Add a 16-byte offset because switch_and_link() looks for the target PC
     // 16 bytes above the stack pointer.

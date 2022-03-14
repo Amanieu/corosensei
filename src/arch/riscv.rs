@@ -71,9 +71,8 @@
 //! ```
 
 use core::arch::{asm, global_asm};
-use core::mem;
 
-use super::allocate_obj_on_stack;
+use super::{allocate_obj_on_stack, push};
 use crate::stack::{Stack, StackPointer};
 use crate::unwind::{
     asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size_root, cfi_reset_args_size_yield,
@@ -141,6 +140,7 @@ macro_rules! addi {
 
 pub const STACK_ALIGNMENT: usize = 16;
 pub const PARENT_LINK_OFFSET: usize = x!(8, 16);
+pub type StackWord = usize;
 
 global_asm!(
     ".balign 4",
@@ -213,18 +213,10 @@ extern "C" {
 
 #[inline]
 pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) -> StackPointer {
-    #[inline]
-    unsafe fn push(sp: &mut usize, val: Option<usize>) {
-        *sp -= mem::size_of::<usize>();
-        if let Some(val) = val {
-            *(*sp as *mut usize) = val;
-        }
-    }
-
     let mut sp = stack.base().get();
 
     // Initial function.
-    push(&mut sp, Some(func as usize));
+    push(&mut sp, Some(func as StackWord));
 
     // Placeholder for parent link.
     push(&mut sp, None);
@@ -240,7 +232,7 @@ pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) ->
     push(&mut sp, None);
 
     // Entry point called by switch_and_link().
-    push(&mut sp, Some(stack_init_trampoline as usize));
+    push(&mut sp, Some(stack_init_trampoline as StackWord));
 
     // Add a 2-word offset because switch_and_link() looks for the target PC
     // 2 words above the stack pointer.

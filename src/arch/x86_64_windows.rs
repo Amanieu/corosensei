@@ -109,13 +109,14 @@
 
 use core::arch::{asm, global_asm};
 
-use super::allocate_obj_on_stack;
+use super::{allocate_obj_on_stack, push};
 use crate::stack::{Stack, StackPointer, StackTebFields};
 use crate::unwind::{asm_may_unwind_root, asm_may_unwind_yield, InitialFunc, TrapHandler};
 use crate::util::EncodedValue;
 
 pub const STACK_ALIGNMENT: usize = 16;
 pub const PARENT_LINK_OFFSET: usize = 0;
+pub type StackWord = u64;
 
 global_asm!(
     asm_function_begin!("stack_init_trampoline"),
@@ -216,14 +217,6 @@ extern "C" {
 
 #[inline]
 pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) -> StackPointer {
-    #[inline]
-    unsafe fn push(sp: &mut usize, val: Option<u64>) {
-        *sp -= 8;
-        if let Some(val) = val {
-            *(*sp as *mut u64) = val;
-        }
-    }
-
     let mut sp = stack.base().get();
 
     // Placeholders for returning TEB.StackLimit and TEB.GuaranteedStackBytes.
@@ -231,7 +224,7 @@ pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) ->
     push(&mut sp, None);
 
     // Initial function.
-    push(&mut sp, Some(func as u64));
+    push(&mut sp, Some(func as StackWord));
 
     // Placeholder for parent link.
     push(&mut sp, None);
@@ -242,16 +235,16 @@ pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) ->
 
     // Write the TEB fields for the target stack.
     let teb = stack.teb_fields();
-    push(&mut sp, Some(teb.GuaranteedStackBytes as u64));
-    push(&mut sp, Some(teb.DeallocationStack as u64));
-    push(&mut sp, Some(teb.StackLimit as u64));
-    push(&mut sp, Some(teb.StackBase as u64));
+    push(&mut sp, Some(teb.GuaranteedStackBytes as StackWord));
+    push(&mut sp, Some(teb.DeallocationStack as StackWord));
+    push(&mut sp, Some(teb.StackLimit as StackWord));
+    push(&mut sp, Some(teb.StackBase as StackWord));
 
     // The stack is aligned to STACK_ALIGNMENT at this point.
     debug_assert_eq!(sp % STACK_ALIGNMENT, 0);
 
     // Entry point called by switch_and_link().
-    push(&mut sp, Some(stack_init_trampoline as u64));
+    push(&mut sp, Some(stack_init_trampoline as StackWord));
 
     StackPointer::new_unchecked(sp)
 }
@@ -537,8 +530,8 @@ pub unsafe fn drop_initial_obj(
 
     // Also copy the TEB fields to the base of the stack so that they can be
     // retreived by update_stack_teb_fields().
-    let base = stack_base.get() as *mut u64;
-    let stack = stack_ptr.get() as *const u64;
+    let base = stack_base.get() as *mut StackWord;
+    let stack = stack_ptr.get() as *const StackWord;
     *base.sub(1) = *stack.add(2); // StackLimit
     *base.sub(2) = *stack.add(4); // GuaranteedStackBytes
 }
@@ -549,7 +542,7 @@ pub unsafe fn drop_initial_obj(
 /// another coroutine.
 #[inline]
 pub unsafe fn update_stack_teb_fields(stack: &mut impl Stack) {
-    let base = stack.base().get() as *const u64;
+    let base = stack.base().get() as *const StackWord;
     let stack_limit = *base.sub(1) as usize;
     let guaranteed_stack_bytes = *base.sub(2) as usize;
     stack.update_teb_fields(stack_limit, guaranteed_stack_bytes);
@@ -559,7 +552,7 @@ pub unsafe fn update_stack_teb_fields(stack: &mut impl Stack) {
 /// saved on the parent stack.
 #[inline]
 pub unsafe fn read_parent_stack_teb_fields(stack_ptr: StackPointer) -> StackTebFields {
-    let stack_ptr = stack_ptr.get() as *const u64;
+    let stack_ptr = stack_ptr.get() as *const StackWord;
     StackTebFields {
         StackBase: *stack_ptr.add(4) as usize,
         StackLimit: *stack_ptr.add(5) as usize,
@@ -576,9 +569,9 @@ pub unsafe fn update_parent_stack_teb_fields(
     stack_limit: usize,
     guaranteed_stack_bytes: usize,
 ) {
-    let stack_ptr = stack_ptr.get() as *mut u64;
-    *stack_ptr.add(5) = stack_limit as u64;
-    *stack_ptr.add(7) = guaranteed_stack_bytes as u64;
+    let stack_ptr = stack_ptr.get() as *mut StackWord;
+    *stack_ptr.add(5) = stack_limit as StackWord;
+    *stack_ptr.add(7) = guaranteed_stack_bytes as StackWord;
 }
 
 /// Registers which must be updated upon return from a trap handler.
@@ -621,8 +614,7 @@ pub unsafe fn setup_trap_trampoline<T>(
     let val_ptr = sp;
 
     // Set up a return address which returns to stack_init_trampoline.
-    sp -= 8;
-    *(sp as *mut u64) = stack_init_trampoline_return as u64;
+    push(&mut sp, Some(stack_init_trampoline_return as StackWord));
 
     // Set up registers for entry into the function.
     TrapHandlerRegs {

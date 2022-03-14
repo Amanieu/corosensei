@@ -70,7 +70,7 @@
 
 use core::arch::{asm, global_asm};
 
-use super::allocate_obj_on_stack;
+use super::{allocate_obj_on_stack, push};
 use crate::stack::{Stack, StackPointer};
 use crate::unwind::{
     asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size_root, cfi_reset_args_size_yield,
@@ -80,6 +80,7 @@ use crate::util::EncodedValue;
 
 pub const STACK_ALIGNMENT: usize = 16;
 pub const PARENT_LINK_OFFSET: usize = 0;
+pub type StackWord = u32;
 
 global_asm!(
     ".balign 16",
@@ -149,18 +150,10 @@ extern "C" {
 
 #[inline]
 pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) -> StackPointer {
-    #[inline]
-    unsafe fn push(sp: &mut usize, val: Option<usize>) {
-        *sp -= 4;
-        if let Some(val) = val {
-            *(*sp as *mut usize) = val;
-        }
-    }
-
     let mut sp = stack.base().get();
 
     // Initial function.
-    push(&mut sp, Some(func as usize));
+    push(&mut sp, Some(func as StackWord));
 
     // Placeholder for parent link.
     push(&mut sp, None);
@@ -175,10 +168,10 @@ pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) ->
     push(&mut sp, None);
     push(&mut sp, None);
     push(&mut sp, None);
-    push(&mut sp, Some(initial_obj));
+    push(&mut sp, Some(initial_obj as StackWord));
 
     // Entry point called by switch_and_link().
-    push(&mut sp, Some(stack_init_trampoline as usize));
+    push(&mut sp, Some(stack_init_trampoline as StackWord));
 
     StackPointer::new_unchecked(sp)
 }
@@ -486,8 +479,7 @@ pub unsafe fn setup_trap_trampoline<T>(
     debug_assert_eq!(sp % STACK_ALIGNMENT, 0);
 
     // Set up a return address which returns to stack_init_trampoline.
-    sp -= 4;
-    *(sp as *mut u32) = stack_init_trampoline_return as u32;
+    push(&mut sp, Some(stack_init_trampoline_return as StackWord));
 
     // Set up registers for entry into the function.
     TrapHandlerRegs {

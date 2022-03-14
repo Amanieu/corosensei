@@ -100,7 +100,7 @@
 
 use core::arch::{asm, global_asm};
 
-use super::allocate_obj_on_stack;
+use super::{allocate_obj_on_stack, push};
 use crate::stack::{Stack, StackPointer};
 use crate::unwind::{
     asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size_root, cfi_reset_args_size_yield,
@@ -110,6 +110,7 @@ use crate::util::EncodedValue;
 
 pub const STACK_ALIGNMENT: usize = 16;
 pub const PARENT_LINK_OFFSET: usize = 0;
+pub type StackWord = u64;
 
 // This is a pretty special function that has no real signature. Its use is to
 // be the "base" function of all coroutines. This entrypoint is used in
@@ -250,20 +251,11 @@ extern "C" {
 /// passed as the 3rd argument to the initial function.
 #[inline]
 pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) -> StackPointer {
-    // x32 uses 64-bit stack slots even though usize is 32-bit.
-    #[inline]
-    unsafe fn push(sp: &mut usize, val: Option<u64>) {
-        *sp -= 8;
-        if let Some(val) = val {
-            *(*sp as *mut u64) = val;
-        }
-    }
-
     let mut sp = stack.base().get();
 
     // Place the address of the initial function to execute at the top of the
     // stack. This is read by stack_init_trampoline() and jumped to.
-    push(&mut sp, Some(func as u64));
+    push(&mut sp, Some(func as StackWord));
 
     // Placeholder for the stack pointer value of the parent context. This is
     // filled in every time switch_and_link() is called.
@@ -275,7 +267,7 @@ pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) ->
 
     // Set up an address at the top of the stack which is called by
     // switch_and_link() during the initial context switch.
-    push(&mut sp, Some(stack_init_trampoline as u64));
+    push(&mut sp, Some(stack_init_trampoline as StackWord));
 
     StackPointer::new_unchecked(sp)
 }
@@ -641,8 +633,7 @@ pub unsafe fn setup_trap_trampoline<T>(
     // Set up a return address which returns to stack_init_trampoline. This has
     // the necessary unwinding metadata to switch back to the primary stack when
     // unwinding.
-    sp -= 8;
-    *(sp as *mut u64) = stack_init_trampoline_return as u64;
+    push(&mut sp, Some(stack_init_trampoline_return as StackWord));
 
     // Set up registers for entry into the function.
     TrapHandlerRegs {

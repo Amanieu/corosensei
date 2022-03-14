@@ -166,3 +166,12 @@ cfg_if::cfg_if! {
         compile_error!("Unsupported target");
     }
 }
+
+/// Helper function to push a value onto a stack.
+#[inline]
+unsafe fn push(sp: &mut usize, val: Option<StackWord>) {
+    *sp -= mem::size_of::<StackWord>();
+    if let Some(val) = val {
+        *(*sp as *mut StackWord) = val;
+    }
+}
