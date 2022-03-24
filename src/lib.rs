@@ -83,6 +83,7 @@
 //! | x86     | ✅                                 | ✅                        | ⚠️*      |
 //! | AArch64 | ✅                                 | ✅                        | ❌       |
 //! | ARM     | ✅                                 | ❌                        | ❌       |
+//! | RISC-V  | ✅                                 | ❌                        | ❌       |
 //!
 //! *\* Linked backtraces are not supported on x86 Windows.*
 //!
