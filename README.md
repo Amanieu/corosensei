@@ -5,12 +5,6 @@
 ### [Documentation](https://docs.rs/corosensei/)
 ### [Changelog](CHANGELOG.md)
 
-<p align="center">
-<img src="https://raw.githubusercontent.com/Amanieu/corosensei/master/assets/Koro_sensei_transparent.webp" width="400"/>
-</p>
-
-*WARNING: Abusing coroutines may result in tasty spaghetti code.*
-
 ## Overview
 
 This crate provides a safe and efficient abstraction for context switching between different stacks, in the form of [coroutines]. A coroutine is a function that can be paused and resumed, yielding values to the caller. A coroutine can suspend itself from any point in its call stack. In addition to receiving yielded values from a coroutine, you can also pass data into the coroutine each time it is resumed.
