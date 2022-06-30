@@ -3,6 +3,7 @@
 //! We need to determine some properties of the target for inline assembly that
 //! are not otherwise easily available. Specifically:
 //! - Does the target use the ARM or Thumb instruction set by default?
+//! - Does the target support Thumb2?
 //! - Does the target use R7 or R11 for its frame pointer?
 //! - Does the target treat R9 as a reserved register?
 
@@ -36,12 +37,21 @@ fn main() {
     // The most reliable way is to check for the thumb-mode feature in
     // CARGO_CFG_TARGET_FEATURE but this is only available on nightly. As a
     // fallback we just check if the target name starts with "thumb".
-    let is_thumb = if let Ok(target_features) = env::var("CARGO_CFG_TARGET_FEATURE") {
-        target_features.split(',').any(|s| s == "thumb-mode")
+    let (is_thumb, has_thumb2) = if let Ok(target_features) = env::var("CARGO_CFG_TARGET_FEATURE") {
+        (
+            target_features.split(',').any(|s| s == "thumb-mode"),
+            target_features.split(',').any(|s| s == "thumb2"),
+        )
     } else {
-        env::var("TARGET").unwrap().starts_with("thumb")
+        // thumbv6m-none-eabi is the only thumb target that doesn't support
+        // thumb2.
+        let target = env::var("TARGET").unwrap();
+        (target.starts_with("thumb"), !target.starts_with("thumbv6"))
     };
     if is_thumb {
         autocfg::emit("is_thumb");
+    }
+    if has_thumb2 {
+        autocfg::emit("has_thumb2");
     }
 }
