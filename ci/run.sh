@@ -11,9 +11,10 @@ if [ "${CROSS}" = "1" ]; then
     CARGO=cross
 fi
 
-# Cross doesn't have an image for thumbv7neon-unknown-linux-gnueabihf
-export CARGO_TARGET_THUMBV7NEON_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc
-export CARGO_TARGET_THUMBV7NEON_UNKNOWN_LINUX_GNUEABIHF_RUNNER="/linux-runner armv7"
+CARGO_TEST_FLAGS=
+if [ "${NO_RUN}" = "1" ]; then
+    CARGO_TEST_FLAGS=--no-run
+fi
 
 # If a test crashes, we want to know which one it was.
 export RUST_TEST_THREADS=1
@@ -23,15 +24,15 @@ export RUST_TEST_THREADS=1
 "${CARGO}" build --target "${TARGET}" --no-default-features --release
 
 # No unwind
-"${CARGO}" test --target "${TARGET}" --all-targets --no-default-features --features default-stack
-"${CARGO}" test --target "${TARGET}" --all-targets --no-default-features --features default-stack --release
+"${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --no-default-features --features default-stack
+"${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --no-default-features --features default-stack --release
 
 # unwind
-"${CARGO}" test --target "${TARGET}" --all-targets
-"${CARGO}" test --target "${TARGET}" --all-targets --release
+"${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets
+"${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --release
 
 # asm-unwind
 if [ "${CHANNEL}" = "nightly" ]; then
-    "${CARGO}" test --target "${TARGET}" --all-targets --features asm-unwind
-    "${CARGO}" test --target "${TARGET}" --all-targets --features asm-unwind --release
+    "${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --features asm-unwind
+    "${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --features asm-unwind --release
 fi
