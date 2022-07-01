@@ -23,6 +23,7 @@ jobs:
         CHANNEL: ${{ matrix.channel }}
         CROSS: ${{ !startsWith(matrix.target, 'x86_64') && contains(matrix.target, 'linux') && '1' || '0' }}
         TARGET: ${{ matrix.target }}
+        NO_RUN: ${{ matrix.no_run }}
       run: sh ci/run.sh
 
     strategy:
@@ -37,18 +38,20 @@ jobs:
           x86_64-apple-darwin,
           x86_64-pc-windows-gnu,
           x86_64-pc-windows-msvc,
-          # Blocked on cross-rs updating its docker image:
-          # https://github.com/cross-rs/cross/pull/591
-          #riscv64gc-unknown-linux-gnu,
-          # Blocked on an LLVM bug with fastcall:
-          # https://reviews.llvm.org/D120382
-          #i686-pc-windows-gnu,
-          #i686-pc-windows-msvc,
+          riscv64gc-unknown-linux-gnu,
+          i686-pc-windows-gnu,
+          i686-pc-windows-msvc,
         ]
         channel: [1.59.0, nightly]
         exclude:
         # 1.59 does not detect the frame pointer register correctly on Thumb.
         - target: thumbv7neon-unknown-linux-gnueabihf
+          channel: 1.59.0
+        # 1.59 has an LLVM bug with fastcall name mangling:
+        # https://reviews.llvm.org/D120382
+        - target: i686-pc-windows-gnu
+          channel: 1.59.0
+        - target: i686-pc-windows-msvc
           channel: 1.59.0
         include:
         - target: x86_64-unknown-linux-gnu
@@ -61,15 +64,19 @@ jobs:
           os: ubuntu-latest
         - target: thumbv7neon-unknown-linux-gnueabihf
           os: ubuntu-latest
+        # The cross-rs image for riscv uses GCC 7.5 which has issues with unwinding
+        - target: riscv64gc-unknown-linux-gnu
+          os: ubuntu-latest
+          no_run: 1
         - target: x86_64-apple-darwin
           os: macos-latest
         - target: x86_64-pc-windows-msvc
           os: windows-latest
         - target: x86_64-pc-windows-gnu
           os: windows-latest
-        #- target: riscv64gc-unknown-linux-gnu
-        #  os: ubuntu-latest
-        #- target: i686-pc-windows-msvc
-        #  os: windows-latest
-        #- target: i686-pc-windows-gnu
-        #  os: windows-latest
+        - target: riscv64gc-unknown-linux-gnu
+          os: ubuntu-latest
+        - target: i686-pc-windows-msvc
+          os: windows-latest
+        - target: i686-pc-windows-gnu
+          os: windows-latest

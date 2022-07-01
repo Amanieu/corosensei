@@ -769,8 +769,8 @@ pub unsafe fn setup_trap_trampoline<T>(
     let parent_link = stack_base.get() - 16;
 
     // Everything below this can be overwritten. Write the object to the stack.
-    let mut sp = parent_link;
-    allocate_obj_on_stack(&mut sp, 16, val);
+    let mut sp = parent_link - 8;
+    allocate_obj_on_stack(&mut sp, 24, val);
     let val_ptr = sp;
 
     // Set up a return address which returns to stack_init_trampoline.
