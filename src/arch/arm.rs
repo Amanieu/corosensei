@@ -183,7 +183,7 @@ cfg_if::cfg_if! {
 // When computing the address of a Thumb label using ADR, we need to manually
 // set the low bit of the address to ensure we get the correct address.
 cfg_if::cfg_if! {
-    if #[cfg(is_thumb)] {
+    if #[cfg(all(is_thumb, has_thumb2))] {
         macro_rules! thumb_symbol_def {
             () => {
                 ".thumb\n.thumb_func"
@@ -192,6 +192,18 @@ cfg_if::cfg_if! {
         macro_rules! thumb_symbol_adr {
             ($reg:expr, $sym:expr) => {
                 concat!("adr ", $reg, ", ", $sym, " + 1")
+            };
+        }
+    } else if #[cfg(is_thumb)] {
+        macro_rules! thumb_symbol_def {
+            () => {
+                ".thumb\n.thumb_func"
+            };
+        }
+        // Thumb1 ADR can only represent addresses that are a multiple of 4.
+        macro_rules! thumb_symbol_adr {
+            ($reg:expr, $sym:expr) => {
+                concat!("adr ", $reg, ", ", $sym, "\n", "adds ", $reg, ", ", $reg, ", #1")
             };
         }
     } else {
@@ -204,6 +216,27 @@ cfg_if::cfg_if! {
             ($reg:expr, $sym:expr) => {
                 concat!("adr ", $reg, ", ", $sym)
             };
+        }
+    }
+}
+
+// Thumb1 support: in some cases we need to use longer instruction sequences
+// when Thumb2 is not available. This doesn't apply when using the ARM ISA since
+// that supports the full set of instructions.
+cfg_if::cfg_if! {
+    if #[cfg(any(not(is_thumb), has_thumb2))] {
+        macro_rules! thumb1 {
+            ($asm:expr) => { "" };
+        }
+        macro_rules! thumb2 {
+            ($asm:expr) => { $asm }
+        }
+    } else {
+        macro_rules! thumb1 {
+            ($asm:expr) => { $asm };
+        }
+        macro_rules! thumb2 {
+            ($asm:expr) => { "" };
         }
     }
 }
@@ -241,7 +274,10 @@ global_asm!(
     concat!("push {{", fp!(), ", lr}}"),
     // Write the parent stack pointer to the parent link and adjust R1 to point
     // to the parent link.
-    "str sp, [r1, #-8]!",
+    thumb2!("str sp, [r1, #-8]!"),
+    thumb1!("mov r3, sp"),
+    thumb1!("subs r1, r1, #8"),
+    thumb1!("str r3, [r1]"),
     // Switch to our stack while popping the padding and initial PC. This also
     // sets up r2 for the third argument to the initial function.
     "adds r2, r2, #12",
@@ -294,8 +330,18 @@ global_asm!(
     concat!(".movsp ", fp!()),
     // As in the original x86_64 code, hand-write the call operation so that it
     // doesn't push an entry into the CPU's return prediction stack.
-    thumb_symbol_adr!("lr", asm_mangle!("stack_init_trampoline_return")),
-    "ldr pc, [r1, #4]",
+    thumb2!(thumb_symbol_adr!(
+        "lr",
+        asm_mangle!("stack_init_trampoline_return")
+    )),
+    thumb2!("ldr pc, [r1, #4]"),
+    thumb1!(thumb_symbol_adr!(
+        "r3",
+        asm_mangle!("stack_init_trampoline_return")
+    )),
+    thumb1!("mov lr, r3"),
+    thumb1!("ldr r3, [r1, #4]"),
+    thumb1!("bx r3"),
     // The balign here seems to be necessary otherwise LLVM's assembler
     // generates invalid offsets to the label.
     ".balign 4",
@@ -432,14 +478,18 @@ pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) ->
     let ret_val;
 
     asm_may_unwind!(
-        thumb_symbol_adr!("lr", "0f"),
+        thumb2!(thumb_symbol_adr!("lr", "0f")),
+        thumb1!(thumb_symbol_adr!("r3", "0f")),
+        thumb1!("mov lr, r3"),
         concat!("push {{r6, ", fp!(), ", lr}}"),
 
-        // Save our stack pointer to X1.
+        // Save our stack pointer to R1.
         "mov r1, sp",
 
         // Get the parent stack pointer from the parent link.
-        "ldr sp, [r2]",
+        thumb2!("ldr sp, [r2]"),
+        thumb1!("ldr r3, [r2]"),
+        thumb1!("mov sp, r3"),
 
         // Pop the FP and PC to return into the parent context.
         concat!("pop {{", fp!(), ", pc}}"),
@@ -461,14 +511,19 @@ pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) ->
         concat!("push {{", fp!(), ", lr}}"),
 
         // Write the parent stack pointer to the parent link.
-        "str sp, [r1, #-8]",
+        thumb2!("str sp, [r1, #-8]"),
+        thumb1!("subs r1, r1, #8"),
+        thumb1!("mov r3, sp"),
+        thumb1!("str r3, [r1]"),
 
         // Switch to our stack
         "mov sp, r2",
 
         // Pop our R6 and FP values from the stack and implicitly pop the
         // saved PC as well.
-        concat!("pop {{r6, ", fp!(), ", lr}}"),
+        thumb2!(concat!("pop {{r6, ", fp!(), ", lr}}")),
+        thumb1!(concat!("pop {{r6, ", fp!(), "}}")),
+        thumb1!("add sp, sp, #4"),
 
         // Pass the argument in R0.
         inlateout("r0") arg => ret_val,
@@ -487,7 +542,9 @@ pub unsafe fn switch_and_reset(arg: EncodedValue, parent_link: *mut StackPointer
     // comments there. Only the differences are commented.
     asm!(
         // Load the parent context's stack pointer.
-        "ldr sp, [{parent_link}]",
+        thumb2!("ldr sp, [{parent_link}]"),
+        thumb1!("ldr r3, [{parent_link}]"),
+        thumb1!("mov sp, r3"),
 
         // Pop FP and PC off the parent stack and return into the parent
         // context.
@@ -522,7 +579,9 @@ pub unsafe fn switch_and_throw(
 
     asm_may_unwind!(
         // Set up a return address.
-        thumb_symbol_adr!("lr", "0f"),
+        thumb2!(thumb_symbol_adr!("lr", "0f")),
+        thumb1!(thumb_symbol_adr!("r3", "0f")),
+        thumb1!("mov lr, r3"),
 
         // Save the registers of the parent context.
         "push {{r6}}",
@@ -536,7 +595,10 @@ pub unsafe fn switch_and_throw(
         "mov sp, r2",
 
         // Pop the coroutine registers, with the saved PC into LR.
-        concat!("pop {{r6, ", fp!(), ", lr}}"),
+        thumb2!(concat!("pop {{r6, ", fp!(), ", lr}}")),
+        thumb1!(concat!("pop {{r6, ", fp!(), "}}")),
+        thumb1!("pop {{r3}}"),
+        thumb1!("mov lr, r3"),
 
         // Simulate a call with an artificial return address so that the throw
         // function will unwind straight into the switch_and_yield() call with
