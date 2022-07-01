@@ -614,7 +614,6 @@ pub unsafe fn on_stack(arg: *mut u8, stack: impl Stack, f: StackCallFunc) {
         cfi_reset_args_size_root!(),
         concat!("call ", asm_mangle!("stack_call_trampoline")),
         "nop",
-        stack_call_trampoline = sym stack_call_trampoline,
         in("a0") arg,
         in("a1") stack.base().get(),
         in("a2") f,
