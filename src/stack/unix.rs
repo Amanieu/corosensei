@@ -2,7 +2,6 @@ extern crate std;
 
 use core::mem::ManuallyDrop;
 use std::io::{Error, Result};
-use std::ptr;
 
 use super::valgrind::ValgrindStackRegistration;
 use super::{Stack, StackPointer, MIN_STACK_SIZE};
@@ -45,9 +44,20 @@ impl DefaultStack {
 
         unsafe {
             // Reserve some address space for the stack.
-            let mmap = libc::mmap(ptr::null_mut(), mmap_len, libc::PROT_NONE, map_flags, -1, 0);
-            if mmap == libc::MAP_FAILED {
-                return Err(Error::last_os_error());
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "jemalloc-stack")] {
+                    //maybe address is a better name than mmap
+                    let mut mmap = std::ptr::null_mut();
+                    let result = jemalloc_sys::posix_memalign(&mut mmap, page_size,mmap_len);
+                    if result != 0 {
+                        return Err(Error::last_os_error());
+                    }
+                } else {
+                    let mmap = libc::mmap(std::ptr::null_mut(), mmap_len, libc::PROT_NONE, map_flags, -1, 0);
+                    if mmap == libc::MAP_FAILED {
+                        return Err(Error::last_os_error());
+                    }
+                }
             }
 
             // Create the result here. If the mprotect call fails then this will
@@ -89,8 +99,14 @@ impl Drop for DefaultStack {
             ManuallyDrop::drop(&mut self.valgrind);
 
             let mmap = self.base.get() - self.mmap_len;
-            let ret = libc::munmap(mmap as _, self.mmap_len);
-            debug_assert_eq!(ret, 0);
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "jemalloc-stack")] {
+                    jemalloc_sys::free(mmap as *mut core::ffi::c_void);
+                } else {
+                    let ret = libc::munmap(mmap as _, self.mmap_len);
+                    debug_assert_eq!(ret, 0);
+                }
+            }
         }
     }
 }

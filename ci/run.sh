@@ -27,6 +27,10 @@ export RUST_TEST_THREADS=1
 "${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --no-default-features --features default-stack
 "${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --no-default-features --features default-stack --release
 
+# jemalloc-stack
+"${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --no-default-features --features jemalloc-stack
+"${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --no-default-features --features jemalloc-stack --release
+
 # unwind
 "${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets
 "${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --release
