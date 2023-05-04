@@ -162,6 +162,9 @@ cfg_if::cfg_if! {
     } else if #[cfg(all(any(target_arch = "riscv64", target_arch = "riscv32"), not(windows)))] {
         mod riscv;
         pub use self::riscv::*;
+    } else if #[cfg(all(target_arch = "loongarch64", not(windows)))] {
+        mod loongarch64;
+        pub use self::loongarch64::*;
     } else {
         compile_error!("Unsupported target");
     }
