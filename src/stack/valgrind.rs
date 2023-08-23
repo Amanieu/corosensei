@@ -88,6 +88,14 @@ cfg_if::cfg_if! {
         unsafe fn valgrind_request(default: Value, _args: &[Value; 6]) -> Value {
             default
         }
+    } else if #[cfg(target_arch = "loongarch64")] {
+        type Value = usize;
+
+        // Valgrind doesn't support LoongArch yet, use a no-op for now.
+        #[inline]
+        unsafe fn valgrind_request(default: Value, _args: &[Value; 6]) -> Value {
+            default
+        }
     } else {
         compile_error!("Unsupported target");
     }

@@ -78,13 +78,14 @@ fn main() {
 
 This crate currently supports the following targets:
 
-|         | ELF (Linux, BSD, bare metal, etc) | Darwin (macOS, iOS, etc) | Windows |
-| ------- | --------------------------------- | ------------------------ | ------- |
-| x86_64  | ✅                                 | ✅                        | ✅       |
-| x86     | ✅                                 | ❌                        | ⚠️*      |
-| AArch64 | ✅                                 | ✅                        | ❌       |
-| ARM     | ✅                                 | ❌                        | ❌       |
-| RISC-V  | ✅                                 | ❌                        | ❌       |
+|             | ELF (Linux, BSD, bare metal, etc) | Darwin (macOS, iOS, etc) | Windows |
+| ----------- | --------------------------------- | ------------------------ | ------- |
+| x86_64      | ✅                                | ✅                       | ✅      |
+| x86         | ✅                                | ❌                       | ⚠️*      |
+| AArch64     | ✅                                | ✅                       | ❌      |
+| ARM         | ✅                                | ❌                       | ❌      |
+| RISC-V      | ✅                                | ❌                       | ❌      |
+| LoongArch64 | ✅                                | ❌                       | ❌      |
 
 \* Linked backtraces are not supported on x86 Windows.
 
@@ -243,14 +244,16 @@ Two benchmarks are available via `cargo bench`:
 
 Benchmark results when running on Linux:
 
-| Arch    | CPU               | Frequency         | Benchmark        | Time      | Cycles  |
-| ------- | ----------------- | ----------------- | ---------------- | --------- | ------- |
-| AArch64 | Apple M1 Max      | 2.06GHz - 3.22GHz | Coroutine switch | 3.8665 ns | N/A     |
-| AArch64 | Apple M1 Max      | 2.06GHz - 3.22GHz | Coroutine call   | 6.4813 ns | N/A     |
-| x86-64  | AMD Ryzen 9 3950X | 3.5GHz - 4.7GHz   | Coroutine switch | 4.2867 ns | 14.8249 |
-| x86-64  | AMD Ryzen 9 3950X | 3.5GHz - 4.7GHz   | Coroutine call   | 5.5082 ns | 19.0069 |
-| AArch64 | ARM Cortex-A72    | 1.6GHz            | Coroutine switch | 16.278 ns | N/A     |
-| AArch64 | ARM Cortex-A72    | 1.6GHz            | Coroutine call   | 18.769 ns | N/A     |
+| Arch        | CPU               | Frequency         | Benchmark        | Time      | Cycles  |
+| ----------- | ----------------- | ----------------- | ---------------- | --------- | ------- |
+| AArch64     | Apple M1 Max      | 2.06GHz - 3.22GHz | Coroutine switch | 3.8665 ns | N/A     |
+| AArch64     | Apple M1 Max      | 2.06GHz - 3.22GHz | Coroutine call   | 6.4813 ns | N/A     |
+| x86-64      | AMD Ryzen 9 3950X | 3.5GHz - 4.7GHz   | Coroutine switch | 4.2867 ns | 14.8249 |
+| x86-64      | AMD Ryzen 9 3950X | 3.5GHz - 4.7GHz   | Coroutine call   | 5.5082 ns | 19.0069 |
+| AArch64     | ARM Cortex-A72    | 1.6GHz            | Coroutine switch | 16.278 ns | N/A     |
+| AArch64     | ARM Cortex-A72    | 1.6GHz            | Coroutine call   | 18.769 ns | N/A     |
+| LoongArch64 | Loongson 3A5000   | 2.3GHz            | Coroutine switch | 9.2831 ns | N/A     |
+| LoongArch64 | Loongson 3A5000   | 2.3GHz            | Coroutine call   | 16.101 ns | N/A     |
 
 ## Credits
 
