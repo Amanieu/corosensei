@@ -42,17 +42,7 @@ jobs:
           i686-pc-windows-gnu,
           i686-pc-windows-msvc,
         ]
-        channel: [1.59.0, nightly]
-        exclude:
-        # 1.59 does not detect the frame pointer register correctly on Thumb.
-        - target: thumbv7neon-unknown-linux-gnueabihf
-          channel: 1.59.0
-        # 1.59 has an LLVM bug with fastcall name mangling:
-        # https://reviews.llvm.org/D120382
-        - target: i686-pc-windows-gnu
-          channel: 1.59.0
-        - target: i686-pc-windows-msvc
-          channel: 1.59.0
+        channel: [stable, nightly]
         include:
         - target: x86_64-unknown-linux-gnu
           os: ubuntu-latest
