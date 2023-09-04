@@ -35,7 +35,9 @@ jobs:
           aarch64-unknown-linux-gnu,
           armv7-unknown-linux-gnueabihf,
           thumbv7neon-unknown-linux-gnueabihf,
+          loongarch64-unknown-linux-gnu,
           x86_64-apple-darwin,
+          aarch64-apple-darwin,
           x86_64-pc-windows-gnu,
           x86_64-pc-windows-msvc,
           riscv64gc-unknown-linux-gnu,
@@ -58,7 +60,11 @@ jobs:
         - target: riscv64gc-unknown-linux-gnu
           os: ubuntu-latest
           no_run: 1
+        - target: loongarch64-unknown-linux-gnu
+          os: ubuntu-latest
         - target: x86_64-apple-darwin
+          os: macos-latest
+        - target: aarch64-apple-darwin
           os: macos-latest
         - target: x86_64-pc-windows-msvc
           os: windows-latest
