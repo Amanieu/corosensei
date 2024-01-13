@@ -4,6 +4,9 @@ on:
       - master
   pull_request:
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
