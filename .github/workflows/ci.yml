@@ -4,6 +4,9 @@ on:
       - master
   pull_request:
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
@@ -36,6 +39,7 @@ jobs:
           armv7-unknown-linux-gnueabihf,
           thumbv7neon-unknown-linux-gnueabihf,
           x86_64-apple-darwin,
+          aarch64-apple-darwin,
           x86_64-pc-windows-gnu,
           x86_64-pc-windows-msvc,
           riscv64gc-unknown-linux-gnu,
@@ -60,6 +64,8 @@ jobs:
           no_run: 1
         - target: x86_64-apple-darwin
           os: macos-latest
+        - target: aarch64-apple-darwin
+          os: macos-14
         - target: x86_64-pc-windows-msvc
           os: windows-latest
         - target: x86_64-pc-windows-gnu
