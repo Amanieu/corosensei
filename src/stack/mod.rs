@@ -4,6 +4,8 @@
 //! However it is possible to use a custom `Stack` implementation if more
 //! control is desired.
 
+extern crate std;
+
 use core::num::NonZeroUsize;
 
 pub mod valgrind;
@@ -59,6 +61,55 @@ pub unsafe trait Stack {
     /// Must be aligned to [`STACK_ALIGNMENT`].
     fn limit(&self) -> StackPointer;
 
+    /// Return the stack size.
+    fn size(&self) -> usize;
+
+    /// Queries the amount of remaining stack as interpreted by this stack.
+    ///
+    /// This function will return the amount of stack space left which will be used
+    /// to determine whether a stack switch should be made or not.
+    fn remaining_stack(&self) -> Option<usize> {
+        let current_ptr = crate::util::current_stack_ptr();
+        current_ptr.checked_sub(self.limit().get())
+    }
+
+    /// Try to grow or reduce the stack.
+    /// During the call of this method, you must ensure that the data on the stack is stationary.
+    #[allow(clippy::missing_safety_doc)]
+    unsafe fn try_grow_or_reduce(&mut self) -> std::io::Result<()> {
+        if self.should_reduce() {
+            self.force_reduce()
+        } else if self.should_grow() {
+            self.force_grow()
+        } else {
+            Ok(())
+        }
+    }
+
+    /// `true` if you should grow the stack.
+    fn should_grow(&self) -> bool {
+        self.remaining_stack()
+            .map(|remaining_stack| remaining_stack <= self.size() / 4)
+            .unwrap_or(false)
+    }
+
+    /// Force the stack to expand to twice its original size.
+    /// During the call of this method, you must ensure that the data on the stack is stationary.
+    #[allow(clippy::missing_safety_doc)]
+    unsafe fn force_grow(&mut self) -> std::io::Result<()>;
+
+    /// `true` if you should reduce the stack.
+    fn should_reduce(&self) -> bool {
+        self.remaining_stack()
+            .map(|remaining_stack| self.size() * 3 / 4 <= remaining_stack)
+            .unwrap_or(false)
+    }
+
+    /// Force the stack to shrink to half its original size.
+    /// During the call of this method, you must ensure that the data on the stack is stationary.
+    #[allow(clippy::missing_safety_doc)]
+    unsafe fn force_reduce(&mut self) -> std::io::Result<()>;
+
     /// On Windows, certain fields must be updated in the Thread Environment
     /// Block when switching to another stack. This function returns the values
     /// that must be assigned for this stack.
@@ -96,6 +147,18 @@ unsafe impl<'a, S: Stack> Stack for &'a mut S {
     #[inline]
     fn limit(&self) -> StackPointer {
         (**self).limit()
+    }
+
+    fn size(&self) -> usize {
+        (**self).size()
+    }
+
+    unsafe fn force_grow(&mut self) -> std::io::Result<()> {
+        (**self).force_grow()
+    }
+
+    unsafe fn force_reduce(&mut self) -> std::io::Result<()> {
+        (**self).force_reduce()
     }
 
     #[inline]

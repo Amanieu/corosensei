@@ -1,3 +1,5 @@
+extern crate std;
+
 use core::cell::Cell;
 use core::hint::unreachable_unchecked;
 use core::marker::PhantomData;
@@ -73,6 +75,7 @@ pub type Coroutine<Input, Yield, Return, Stack = DefaultStack> =
 /// However if all of the code executed by a coroutine is under your control and
 /// you can ensure that all types on the stack when a coroutine is suspended
 /// are `Send` then it is safe to manually implement `Send` for a coroutine.
+#[allow(clippy::type_complexity)]
 pub struct ScopedCoroutine<'a, Input, Yield, Return, Stack: stack::Stack> {
     // Stack that the coroutine is executing on.
     stack: Stack,
@@ -415,6 +418,12 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
         }
     }
 
+    /// Get the mut reference of stack.
+    #[allow(clippy::missing_safety_doc)]
+    pub unsafe fn stack_mut(&mut self) -> &mut Stack {
+        &mut self.stack
+    }
+
     /// Returns a [`CoroutineTrapHandler`] which can be used to handle traps that
     /// occur inside the coroutine. Examples of traps that can be handled are
     /// invalid memory accesses and stack overflows.
@@ -600,6 +609,18 @@ unsafe impl stack::Stack for ParentStack {
     #[inline]
     fn limit(&self) -> StackPointer {
         self.stack_base
+    }
+
+    fn size(&self) -> usize {
+        unimplemented!()
+    }
+
+    unsafe fn force_grow(&mut self) -> std::io::Result<()> {
+        unimplemented!()
+    }
+
+    unsafe fn force_reduce(&mut self) -> std::io::Result<()> {
+        unimplemented!()
     }
 
     #[inline]

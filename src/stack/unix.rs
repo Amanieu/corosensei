@@ -105,4 +105,63 @@ unsafe impl Stack for DefaultStack {
     fn limit(&self) -> StackPointer {
         StackPointer::new(self.base.get() - self.mmap_len).unwrap()
     }
+
+    fn size(&self) -> usize {
+        self.mmap_len
+    }
+
+    unsafe fn force_grow(&mut self) -> Result<()> {
+        // De-register the guard first.
+        ManuallyDrop::drop(&mut self.valgrind);
+        let page_size = page_size();
+        let ret = libc::munmap(self.limit().get() as _, page_size);
+        debug_assert_eq!(ret, 0);
+        // OpenBSD requires MAP_STACK on anything that is used as a stack.
+        cfg_if::cfg_if! {
+            if #[cfg(target_os = "openbsd")] {
+                let map_flags = libc::MAP_ANONYMOUS | libc::MAP_PRIVATE | libc::MAP_STACK;
+            } else {
+                let map_flags = libc::MAP_ANONYMOUS | libc::MAP_PRIVATE;
+            }
+        }
+        // Reserve some address space for the stack.
+        let old_size = self.size();
+        // fixme is the new_base correct?
+        let new_base = (self.limit().get() + page_size - old_size) as _;
+        let mmap = libc::mmap(new_base, old_size, libc::PROT_NONE, map_flags, -1, 0);
+        if mmap == libc::MAP_FAILED {
+            return Err(Error::last_os_error());
+        }
+        self.mmap_len = old_size * 2;
+        self.valgrind = ManuallyDrop::new(ValgrindStackRegistration::new(
+            self.base.get() as *mut u8,
+            self.size(),
+        ));
+
+        // Make everything except the guard page writable.
+        if libc::mprotect(
+            new_base.cast::<u8>().add(page_size).cast(),
+            old_size,
+            libc::PROT_READ | libc::PROT_WRITE,
+        ) != 0
+        {
+            return Err(Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    unsafe fn force_reduce(&mut self) -> Result<()> {
+        // De-register the stack first.
+        ManuallyDrop::drop(&mut self.valgrind);
+
+        let new_stack_size = self.size() / 2;
+        let ret = libc::munmap(self.limit().get() as _, new_stack_size + page_size());
+        debug_assert_eq!(ret, 0);
+        self.mmap_len = new_stack_size;
+        self.valgrind = ManuallyDrop::new(ValgrindStackRegistration::new(
+            self.base.get() as *mut u8,
+            self.size(),
+        ));
+        Ok(())
+    }
 }

@@ -83,7 +83,7 @@
 
 extern crate std;
 
-use std::io::{Error, Result};
+use std::io::{Error, ErrorKind, Result};
 use std::ptr;
 
 use windows_sys::Win32::System::Memory::{
@@ -232,6 +232,47 @@ unsafe impl Stack for DefaultStack {
     #[inline]
     fn limit(&self) -> StackPointer {
         self.deallocation_stack
+    }
+
+    fn size(&self) -> usize {
+        self.base.get() - self.deallocation_stack.get()
+    }
+
+    unsafe fn force_grow(&mut self) -> Result<()> {
+        // De-register the guard first.
+        let page_size = page_size();
+        let guard_size = guard_page_size(page_size);
+        let stack_guarantee = get_thread_stack_guarantee(page_size);
+        let stack_guard_size = guard_size + stack_guarantee;
+        let old_guard_addr = self.limit - stack_guard_size;
+        let ret = VirtualFree(old_guard_addr as *mut _, stack_guard_size, MEM_RELEASE);
+        debug_assert!(ret != 0);
+
+        // Reserve virtual memory for the stack.
+        let old_size = self.size();
+        // fixme is the new_base correct?
+        let new_base = old_guard_addr - old_size;
+        let alloc_base = VirtualAlloc(new_base as _, old_size, MEM_RESERVE, PAGE_READWRITE);
+        if alloc_base.is_null() {
+            return Err(Error::last_os_error());
+        }
+
+        // Commit the guard pages.
+        if VirtualAlloc(
+            (new_base - stack_guard_size) as *mut _,
+            stack_guard_size,
+            MEM_COMMIT,
+            PAGE_READWRITE | PAGE_GUARD,
+        )
+        .is_null()
+        {
+            return Err(Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    unsafe fn force_reduce(&mut self) -> Result<()> {
+        Err(Error::new(ErrorKind::Other, "unsupported"))
     }
 
     #[inline]

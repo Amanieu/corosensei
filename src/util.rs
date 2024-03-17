@@ -8,6 +8,7 @@
 
 use core::mem::{self, ManuallyDrop};
 use core::ptr;
+use psm::psm_stack_information;
 
 /// Internal type for a value that has been encoded in a `usize`.
 pub type EncodedValue = usize;
@@ -37,3 +38,25 @@ pub unsafe fn decode_val<T>(val: EncodedValue) -> T {
         ptr::read(val as *const T)
     }
 }
+
+psm_stack_information! (
+    yes {
+        pub fn current_stack_ptr() -> usize {
+            psm::stack_pointer() as usize
+        }
+    }
+    no {
+        #[inline(always)]
+        pub fn current_stack_ptr() -> usize {
+            unsafe {
+                let mut x = std::mem::MaybeUninit::<u8>::uninit();
+                // Unlikely to be ever exercised. As a fallback we execute a volatile read to a
+                // local (to hopefully defeat the optimisations that would make this local a static
+                // global) and take its address. This way we get a very approximate address of the
+                // current frame.
+                x.as_mut_ptr().write_volatile(42);
+                x.as_ptr() as usize
+            }
+        }
+    }
+);
