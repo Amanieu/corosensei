@@ -699,11 +699,15 @@ pub unsafe fn drop_initial_obj(
 /// be updated in the stack. This is necessary if the stack is reused for
 /// another coroutine.
 #[inline]
-pub unsafe fn update_stack_teb_fields(stack: &mut impl Stack) {
-    let base = stack.base().get() as *const StackWord;
-    let stack_limit = *base.sub(1) as usize;
-    let guaranteed_stack_bytes = *base.sub(2) as usize;
-    stack.update_teb_fields(stack_limit, guaranteed_stack_bytes);
+pub unsafe fn update_stack_teb_fields<'a, I: IntoIterator<Item = &'a mut (impl Stack + 'a)>>(
+    segments: I,
+) {
+    for stack in segments {
+        let base = stack.base().get() as *const StackWord;
+        let stack_limit = *base.sub(1) as usize;
+        let guaranteed_stack_bytes = *base.sub(2) as usize;
+        stack.update_teb_fields(stack_limit, guaranteed_stack_bytes);
+    }
 }
 
 /// This function is called by `on_parent_stack` to read the saved TEB fields
