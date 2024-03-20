@@ -135,9 +135,28 @@ pub struct DefaultStack {
     stack_guarantee: usize,
 }
 
-impl DefaultStack {
+impl Default for DefaultStack {
+    fn default() -> Self {
+        Self::new(1024 * 1024).expect("failed to allocate stack")
+    }
+}
+
+impl Drop for DefaultStack {
+    fn drop(&mut self) {
+        unsafe {
+            let alloc_base = self.deallocation_stack.get() as *mut _;
+            let ret = VirtualFree(alloc_base, 0, MEM_RELEASE);
+            debug_assert!(ret != 0);
+        }
+    }
+}
+
+unsafe impl Stack for DefaultStack {
     /// Creates a new stack which has at least the given capacity.
-    pub fn new(size: usize) -> Result<Self> {
+    fn new(size: usize) -> Result<Self>
+    where
+        Self: Sized,
+    {
         // Apply minimum stack size.
         let size = size.max(MIN_STACK_SIZE);
 
@@ -205,25 +224,7 @@ impl DefaultStack {
             Ok(out)
         }
     }
-}
 
-impl Default for DefaultStack {
-    fn default() -> Self {
-        Self::new(1024 * 1024).expect("failed to allocate stack")
-    }
-}
-
-impl Drop for DefaultStack {
-    fn drop(&mut self) {
-        unsafe {
-            let alloc_base = self.deallocation_stack.get() as *mut _;
-            let ret = VirtualFree(alloc_base, 0, MEM_RELEASE);
-            debug_assert!(ret != 0);
-        }
-    }
-}
-
-unsafe impl Stack for DefaultStack {
     #[inline]
     fn base(&self) -> StackPointer {
         self.base

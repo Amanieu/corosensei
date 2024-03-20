@@ -20,9 +20,31 @@ pub struct DefaultStack {
     valgrind: ManuallyDrop<ValgrindStackRegistration>,
 }
 
-impl DefaultStack {
+impl Default for DefaultStack {
+    fn default() -> Self {
+        Self::new(1024 * 1024).expect("failed to allocate stack")
+    }
+}
+
+impl Drop for DefaultStack {
+    fn drop(&mut self) {
+        unsafe {
+            // De-register the stack first.
+            ManuallyDrop::drop(&mut self.valgrind);
+
+            let mmap = self.base.get() - self.mmap_len;
+            let ret = libc::munmap(mmap as _, self.mmap_len);
+            debug_assert_eq!(ret, 0);
+        }
+    }
+}
+
+unsafe impl Stack for DefaultStack {
     /// Creates a new stack which has at least the given capacity.
-    pub fn new(size: usize) -> Result<Self> {
+    fn new(size: usize) -> Result<Self>
+    where
+        Self: Sized,
+    {
         // Apply minimum stack size.
         let size = size.max(MIN_STACK_SIZE);
 
@@ -74,28 +96,7 @@ impl DefaultStack {
             Ok(out)
         }
     }
-}
 
-impl Default for DefaultStack {
-    fn default() -> Self {
-        Self::new(1024 * 1024).expect("failed to allocate stack")
-    }
-}
-
-impl Drop for DefaultStack {
-    fn drop(&mut self) {
-        unsafe {
-            // De-register the stack first.
-            ManuallyDrop::drop(&mut self.valgrind);
-
-            let mmap = self.base.get() - self.mmap_len;
-            let ret = libc::munmap(mmap as _, self.mmap_len);
-            debug_assert_eq!(ret, 0);
-        }
-    }
-}
-
-unsafe impl Stack for DefaultStack {
     #[inline]
     fn base(&self) -> StackPointer {
         self.base

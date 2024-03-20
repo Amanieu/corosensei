@@ -1,8 +1,11 @@
+extern crate std;
+
 use core::cell::Cell;
 use core::hint::unreachable_unchecked;
 use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
 use core::ptr;
+use std::collections::VecDeque;
 
 use crate::arch::{self, STACK_ALIGNMENT};
 #[cfg(windows)]
@@ -74,8 +77,9 @@ pub type Coroutine<Input, Yield, Return, Stack = DefaultStack> =
 /// you can ensure that all types on the stack when a coroutine is suspended
 /// are `Send` then it is safe to manually implement `Send` for a coroutine.
 pub struct ScopedCoroutine<'a, Input, Yield, Return, Stack: stack::Stack> {
-    // Stack that the coroutine is executing on.
-    stack: Stack,
+    // Stack segments that the coroutine is executing on.
+    // The latest SP is always on the last segment.
+    segments: VecDeque<Stack>,
 
     // Current stack pointer at which the coroutine state is held. This is
     // None when the coroutine has completed execution.
@@ -193,9 +197,10 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
             // coroutine_func. Write the given function object to the stack so
             // its address is passed to coroutine_func on the first resume.
             let stack_ptr = arch::init_stack(&stack, coroutine_func::<Input, Yield, Return, F>, f);
-
+            let mut segments = VecDeque::with_capacity(1);
+            segments.push_back(stack);
             Self {
-                stack,
+                segments,
                 stack_ptr: Some(stack_ptr),
                 initial_stack_ptr: stack_ptr,
                 drop_fn: drop_fn::<F>,
@@ -239,6 +244,33 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
         }
     }
 
+    /// Try to create and switching to a new stack segment if necessary.
+    pub fn try_grow_stack(&mut self, sp: Option<StackPointer>, red_zone: usize) {
+        if self.should_grow_stack(sp, red_zone) {
+            self.force_grow_stack();
+        }
+    }
+
+    /// Test if it's necessary to create and switching to a new stack segment.
+    pub fn should_grow_stack(&self, sp: Option<StackPointer>, red_zone: usize) -> bool {
+        let segment = self.segments.back().expect("No stack segments");
+        if let Some(stack_ptr) = self.stack_ptr {
+            sp.unwrap_or(stack_ptr).get() - segment.limit().get() <= red_zone
+        } else {
+            sp.expect("Invalid stack pointer").get() - segment.limit().get() <= red_zone
+        }
+    }
+
+    /// Force the creation and switching to a new stack segment.
+    pub fn force_grow_stack(&mut self) {
+        let segment = self.segments.back().expect("No stack segments");
+        // create a new stack segment
+        self.segments.push_back(
+            Stack::new(segment.base().get() - segment.limit().get())
+                .expect("failed to allocate stack"),
+        );
+    }
+
     /// Common code for resuming execution of a coroutine.
     unsafe fn resume_inner(
         &mut self,
@@ -250,8 +282,11 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
         self.stack_ptr = None;
 
         let mut input = ManuallyDrop::new(input);
-        let (result, stack_ptr) =
-            arch::switch_and_link(util::encode_val(&mut input), stack_ptr, self.stack.base());
+        let (result, stack_ptr) = arch::switch_and_link(
+            util::encode_val(&mut input),
+            stack_ptr,
+            self.segments.back().expect("No stack segments").base(),
+        );
         self.stack_ptr = stack_ptr;
 
         // Decode the returned value depending on whether the coroutine
@@ -323,7 +358,11 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
         // initial object.
         if !self.started() {
             unsafe {
-                arch::drop_initial_obj(self.stack.base(), stack_ptr, self.drop_fn);
+                arch::drop_initial_obj(
+                    self.segments.back().expect("No stack segments").base(),
+                    stack_ptr,
+                    self.drop_fn,
+                );
             }
             self.stack_ptr = None;
             return;
@@ -380,8 +419,11 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
         // switch_and_throw unwinds.
         self.stack_ptr = None;
 
-        let (result, stack_ptr) =
-            arch::switch_and_throw(forced_unwind, stack_ptr, self.stack.base());
+        let (result, stack_ptr) = arch::switch_and_throw(
+            forced_unwind,
+            stack_ptr,
+            self.segments.back().expect("No stack segments").base(),
+        );
         self.stack_ptr = stack_ptr;
 
         // Decode the returned value depending on whether the coroutine
@@ -397,7 +439,7 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
     ///
     /// This allows the stack to be re-used for another coroutine.
     #[allow(unused_mut)]
-    pub fn into_stack(mut self) -> Stack {
+    pub fn into_stack(mut self) -> VecDeque<Stack> {
         assert!(
             self.done(),
             "cannot extract stack from an incomplete coroutine"
@@ -405,11 +447,11 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
 
         #[cfg(windows)]
         unsafe {
-            arch::update_stack_teb_fields(&mut self.stack);
+            arch::update_stack_teb_fields(&mut self.segments);
         }
 
         unsafe {
-            let stack = ptr::read(&self.stack);
+            let stack = ptr::read(&self.segments);
             mem::forget(self);
             stack
         }
@@ -427,9 +469,10 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
     /// care. See [`CoroutineTrapHandler::setup_trap_handler`] for the exact
     /// safety requirements.
     pub fn trap_handler(&self) -> CoroutineTrapHandler<Return> {
+        let last_segment = self.segments.back().expect("No stack segments");
         CoroutineTrapHandler {
-            stack_base: self.stack.base(),
-            stack_limit: self.stack.limit(),
+            stack_base: last_segment.base(),
+            stack_limit: last_segment.limit(),
             marker: PhantomData,
         }
     }
@@ -449,7 +492,7 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack> Drop
 
         #[cfg(windows)]
         unsafe {
-            arch::update_stack_teb_fields(&mut self.stack);
+            arch::update_stack_teb_fields(&mut self.segments);
         }
     }
 }
@@ -506,7 +549,7 @@ impl<Input, Yield> Yielder<Input, Yield> {
         };
 
         // Create a virtual stack that starts below the parent stack.
-        let stack = unsafe { ParentStack::new(stack_ptr) };
+        let stack = unsafe { ParentStack::from(stack_ptr) };
 
         on_stack(stack, f)
     }
@@ -578,7 +621,7 @@ struct ParentStack {
 
 impl ParentStack {
     #[inline]
-    unsafe fn new(stack_ptr: StackPointer) -> Self {
+    unsafe fn from(stack_ptr: StackPointer) -> Self {
         let stack_base = StackPointer::new_unchecked(stack_ptr.get() & !(STACK_ALIGNMENT - 1));
         Self {
             stack_base,
@@ -589,6 +632,13 @@ impl ParentStack {
 }
 
 unsafe impl stack::Stack for ParentStack {
+    fn new(_size: usize) -> std::io::Result<Self>
+    where
+        Self: Sized,
+    {
+        unimplemented!()
+    }
+
     #[inline]
     fn base(&self) -> StackPointer {
         self.stack_base

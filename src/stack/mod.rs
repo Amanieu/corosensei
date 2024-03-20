@@ -4,6 +4,8 @@
 //! However it is possible to use a custom `Stack` implementation if more
 //! control is desired.
 
+extern crate std;
+
 use core::num::NonZeroUsize;
 
 pub mod valgrind;
@@ -45,6 +47,11 @@ pub const MIN_STACK_SIZE: usize = 4096;
 /// On Windows, this trait has some extra methods which are needed because the
 /// OS is much more involved with stack management than other platforms.
 pub unsafe trait Stack {
+    /// Creates a new stack which has at least the given capacity.
+    fn new(size: usize) -> std::io::Result<Self>
+    where
+        Self: Sized;
+
     /// Returns the base address of the stack. This is the highest address since
     /// stacks grow downwards on most modern architectures.
     ///
@@ -88,6 +95,13 @@ pub struct StackTebFields {
 /// A mutable reference to a stack can be used as a stack. The lifetime of the
 /// resulting coroutine will be bound to that of the reference.
 unsafe impl<'a, S: Stack> Stack for &'a mut S {
+    fn new(_size: usize) -> std::io::Result<Self>
+    where
+        Self: Sized,
+    {
+        unimplemented!()
+    }
+
     #[inline]
     fn base(&self) -> StackPointer {
         (**self).base()

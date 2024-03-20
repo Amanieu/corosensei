@@ -6,7 +6,7 @@ use std::string::ToString;
 use std::{println, ptr};
 
 use crate::coroutine::on_stack;
-use crate::stack::DefaultStack;
+use crate::stack::{DefaultStack, Stack};
 
 #[test]
 fn smoke() {

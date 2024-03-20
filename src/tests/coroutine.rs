@@ -6,7 +6,9 @@ use std::string::ToString;
 use std::{println, ptr};
 
 use crate::coroutine::Coroutine;
-use crate::{CoroutineResult, ScopedCoroutine};
+use crate::stack::{DefaultStack, Stack, StackPointer, MIN_STACK_SIZE};
+use crate::tests::coroutine::trap_handler::HANDLER;
+use crate::{CoroutineResult, ScopedCoroutine, Yielder};
 
 #[test]
 fn smoke() {
@@ -376,7 +378,10 @@ fn stack_overflow() {
 
     // Now reuse the stack and do it again. Make sure the guard pages are
     // properly reset on Windows.
-    let stack = coroutine.into_stack();
+    let stack = coroutine
+        .into_stack()
+        .pop_back()
+        .expect("No stack segments");
     let mut coroutine = Coroutine::with_stack(stack, |y, ()| {
         #[allow(unconditional_recursion)]
         fn recurse(p: &mut [u8; 100]) {
@@ -399,6 +404,189 @@ fn stack_overflow() {
     assert_eq!(coroutine.resume(()), CoroutineResult::Return(42));
 
     println!("Recovered from second stack overflow");
+}
+
+#[test]
+fn force_stack_grow() {
+    let mut coroutine = Coroutine::new(|y, ()| {
+        fn recurse(left_times: i32, p: &mut [u8; 1024], y: &Yielder<(), i32>) {
+            if left_times == 0 {
+                y.suspend(1);
+                // The segment 1 has already held the memory
+                return;
+            }
+            unsafe { ptr::read_volatile(&p) };
+            recurse(left_times - 1, &mut [0; 1024], y);
+        }
+        recurse(768, &mut [0; 1024], y);
+        fn recurse2(left_times: i32, p: &mut [u8; 1024]) {
+            if left_times == 0 {
+                // The segment 2 hold the memory for a while
+                return;
+            }
+            unsafe { ptr::read_volatile(&p) };
+            recurse2(left_times - 1, &mut [0; 1024]);
+        }
+        recurse2(768, &mut [0; 1024]);
+        2
+    });
+    assert_eq!(coroutine.resume(()), CoroutineResult::Yield(1));
+    assert_eq!(coroutine.should_grow_stack(None, MIN_STACK_SIZE), false);
+    coroutine.force_grow_stack();
+    assert_eq!(coroutine.resume(()), CoroutineResult::Return(2));
+}
+
+/// fixme
+#[ignore]
+#[test]
+fn stack_grow() {
+    use std::{io, mem, ptr, thread_local};
+
+    thread_local! {
+        pub static CURRENT: Cell<
+            Option<*mut ScopedCoroutine<'static, (), i32, i32, DefaultStack>>,
+        > = Cell::new(None);
+    }
+
+    #[cfg(unix)]
+    unsafe {
+        unsafe extern "C" fn signal_handler(
+            _signum: libc::c_int,
+            _siginfo: &libc::siginfo_t,
+            context: &mut libc::ucontext_t,
+        ) {
+            let sp;
+            cfg_if::cfg_if! {
+                if #[cfg(all(
+                    any(target_os = "linux", target_os = "android"),
+                    target_arch = "x86_64",
+                ))] {
+                    sp = context.uc_mcontext.gregs[libc::REG_RSP as usize] as usize;
+                } else if #[cfg(all(
+                    any(target_os = "linux", target_os = "android"),
+                    target_arch = "x86",
+                ))] {
+                    sp = context.uc_mcontext.gregs[libc::REG_ESP as usize] as usize;
+                } else if #[cfg(all(target_vendor = "apple", target_arch = "x86_64"))] {
+                    sp = (*context.uc_mcontext).__ss.__rsp as usize;
+                } else if #[cfg(all(
+                        any(target_os = "linux", target_os = "android"),
+                        target_arch = "aarch64",
+                    ))] {
+                    sp = context.uc_mcontext.sp as usize;
+                } else if #[cfg(all(
+                    any(target_os = "linux", target_os = "android"),
+                    target_arch = "arm",
+                ))] {
+                    sp = context.uc_mcontext.arm_sp as usize;
+                } else if #[cfg(all(
+                    any(target_os = "linux", target_os = "android"),
+                    any(target_arch = "riscv64", target_arch = "riscv32"),
+                ))] {
+                    sp = context.uc_mcontext.__gregs[libc::REG_SP] as usize;
+                } else if #[cfg(all(target_vendor = "apple", target_arch = "aarch64"))] {
+                    sp = (*context.uc_mcontext).__ss.__sp as usize;
+                } else if #[cfg(all(target_os = "linux", target_arch = "loongarch64"))] {
+                    sp = context.uc_mcontext.__gregs[3]  as usize;
+                } else {
+                    compile_error!("Unsupported platform");
+                }
+            };
+            let co = &mut *CURRENT.with(|x| x.get().unwrap());
+            let sp = StackPointer::new_unchecked(sp);
+            assert!(
+                co.should_grow_stack(Some(sp), 4 * MIN_STACK_SIZE),
+                "The stack actually needs to grow!"
+            );
+            co.force_grow_stack();
+            todo!("resume the coroutine on the new stack segment and continue execution");
+        }
+        let mut handler: libc::sigaction = mem::zeroed();
+        handler.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK;
+        handler.sa_sigaction = signal_handler as usize;
+        libc::sigfillset(&mut handler.sa_mask);
+        if libc::sigaction(libc::SIGSEGV, &handler, ptr::null_mut()) != 0 {
+            panic!(
+                "unable to install signal handler: {}",
+                io::Error::last_os_error(),
+            );
+        }
+        if libc::sigaction(libc::SIGBUS, &handler, ptr::null_mut()) != 0 {
+            panic!(
+                "unable to install signal handler: {}",
+                io::Error::last_os_error(),
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::Foundation::{
+            EXCEPTION_ACCESS_VIOLATION, EXCEPTION_STACK_OVERFLOW,
+        };
+        use windows_sys::Win32::System::Diagnostics::Debug::{
+            AddVectoredExceptionHandler, EXCEPTION_POINTERS,
+        };
+
+        unsafe extern "system" fn exception_handler(
+            exception_info: *mut EXCEPTION_POINTERS,
+        ) -> i32 {
+            match (*(*exception_info).ExceptionRecord).ExceptionCode {
+                EXCEPTION_ACCESS_VIOLATION | EXCEPTION_STACK_OVERFLOW => {}
+                _ => return 0, // EXCEPTION_CONTINUE_SEARCH
+            }
+
+            let sp;
+            cfg_if::cfg_if! {
+                if #[cfg(target_arch = "x86_64")] {
+                    sp = (*(*exception_info).ContextRecord).Rsp as usize;
+                } else if #[cfg(target_arch = "x86")] {
+                    sp = (*(*exception_info).ContextRecord).Esp as usize;
+                } else {
+                    compile_error!("Unsupported platform");
+                }
+            };
+            let co = &mut *CURRENT.with(|x| x.get().unwrap());
+            let sp = StackPointer::new_unchecked(sp);
+            assert!(
+                co.should_grow_stack(Some(sp), 4 * MIN_STACK_SIZE),
+                "The stack actually needs to grow!"
+            );
+            co.force_grow_stack();
+            todo!("resume the coroutine on the new stack segment and continue execution");
+
+            // EXCEPTION_CONTINUE_EXECUTION is -1. Not to be confused with
+            // ExceptionContinueExecution which has a value of 0.
+            -1
+        }
+
+        if AddVectoredExceptionHandler(1, Some(exception_handler)).is_null() {
+            panic!(
+                "failed to add exception handler: {}",
+                io::Error::last_os_error()
+            );
+        }
+    }
+
+    let mut coroutine = Coroutine::new(|y, ()| {
+        fn recurse(left_times: i32, p: &mut [u8; 1024]) {
+            if left_times == 0 {
+                return;
+            }
+            // Ensure the stack allocation isn't optimized away.
+            unsafe { ptr::read_volatile(&p) };
+            recurse(left_times - 1, &mut [0; 1024]);
+        }
+
+        recurse(1025, &mut [0; 1024]);
+        y.suspend(1);
+        2
+    });
+    CURRENT.with(|x| {
+        x.set(Some(&mut coroutine));
+    });
+    assert_eq!(coroutine.resume(()), CoroutineResult::Yield(1));
+    assert_eq!(coroutine.resume(()), CoroutineResult::Return(2));
 }
 
 /// Helper module for setting up a trap handler.
