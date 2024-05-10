@@ -457,8 +457,8 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack> Drop
 /// `Yielder` is an interface provided to a coroutine which allows it to suspend
 /// itself and pass values in and out of the coroutine.
 ///
-/// `Yielder` can be freely copied to create multiple references to the same
-/// underlying object. However a `Yielder` cannot be moved to another thread.
+/// Multiple references can be created to the same `Yielder`, but these cannot
+/// be moved to another thread.
 #[repr(transparent)]
 pub struct Yielder<Input, Yield> {
     // Internally the Yielder is just the parent link on the stack which is
