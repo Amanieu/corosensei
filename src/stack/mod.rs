@@ -15,11 +15,6 @@ cfg_if::cfg_if! {
     } else if #[cfg(all(feature = "default-stack", windows))] {
         mod windows;
         pub use self::windows::DefaultStack;
-    } else {
-        /// Dummy stack for platforms that do not provide a default stack.
-        ///
-        /// This is only here for use as a default generic parameter.
-        pub struct DefaultStack;
     }
 }
 

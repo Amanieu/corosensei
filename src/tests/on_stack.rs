@@ -59,7 +59,7 @@ fn panics_propagated() {
     let b = SetOnDrop(a.clone());
     let result = panic::catch_unwind(AssertUnwindSafe(move || {
         on_stack(DefaultStack::default(), move || {
-            drop(&b);
+            drop(b);
             panic!("foobar");
         })
     }));
