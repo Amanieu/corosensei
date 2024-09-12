@@ -139,7 +139,6 @@ unsafe fn allocate_obj_on_stack<T>(sp: &mut usize, sp_offset: usize, obj: T) {
     debug_assert_eq!(*sp % STACK_ALIGNMENT, 0);
 }
 
-#[allow(binary_asm_labels)]
 cfg_if::cfg_if! {
     if #[cfg(all(target_arch = "x86_64", not(windows)))] {
         mod x86_64;
