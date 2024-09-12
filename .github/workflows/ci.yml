@@ -2,6 +2,7 @@ on:
   push:
     branches:
       - master
+      - dev-stack-enhance2
   pull_request:
 
 env:
