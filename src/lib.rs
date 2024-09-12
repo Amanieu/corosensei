@@ -233,7 +233,6 @@
 // Must come first because it defines macros used by other modules.
 mod unwind;
 
-#[allow(binary_asm_labels)]
 mod arch;
 mod coroutine;
 pub mod stack;
