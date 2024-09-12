@@ -626,7 +626,7 @@ pub fn sp() -> StackPointer {
     let ret_sp;
     unsafe {
         asm!(
-            "mv {0}, $sp",
+            "mv {0}, sp",
             out(reg) ret_sp,
             options(nomem, nostack, preserves_flags)
         );
