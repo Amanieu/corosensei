@@ -236,7 +236,7 @@ pub unsafe fn switch_and_link(
         // Push a return address onto our stack and then jump to the return
         // address at the top of the coroutine stack.
         //
-        // From here on execution continues in stack_init_trampoline or the 0:
+        // From here on execution continues in stack_init_trampoline or the 3:
         // label in switch_yield.
         "call [eax]",
 
@@ -291,7 +291,7 @@ pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) ->
         // point to "0". We use an intermediate constant here to work around a
         // limitation of LLVM's Intel syntax parser which doesn't support 2
         // symbols in an expression.
-        ".equ .Loffset_yield, 0f - 2b",
+        ".equ .Loffset_yield, 3f - 2b",
         "add dword ptr [esp], offset .Loffset_yield",
 
         // Save our stack pointer to EDX, which is then returned out of
@@ -325,7 +325,7 @@ pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) ->
         // - EAX points to the top of our stack.
         // - EDX points to the base of our stack.
         // - ECX contains the argument passed from switch_and_link.
-        "0:",
+        "3:",
 
         // Save the EBP of the parent context to the parent stack.
         "push ebp",
@@ -402,7 +402,7 @@ pub unsafe fn switch_and_throw(
         // about how this code works.
         "call 2f",
         "2:",
-        ".equ .Loffset_throw, 0f - 2b",
+        ".equ .Loffset_throw, 3f - 2b",
         "add dword ptr [esp], offset .Loffset_throw",
 
         // Save EBP of the parent context.
@@ -437,7 +437,7 @@ pub unsafe fn switch_and_throw(
 
         // Upon returning, our register state is just like a normal return into
         // switch_and_link().
-        "0:",
+        "3:",
 
         // Restore registers just like the second half of switch_and_link.
         "pop esi",

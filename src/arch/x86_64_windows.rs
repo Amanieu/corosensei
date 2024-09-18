@@ -330,7 +330,7 @@ pub unsafe fn switch_and_link(
     asm_may_unwind_root!(
         // Set up a secondary copy of the return address. This is only used by
         // the unwinder, not by actual returns.
-        "lea rax, [rip + 0f]",
+        "lea rax, [rip + 2f]",
         "push rax",
 
         // Save the TEB fields to the stack.
@@ -345,7 +345,7 @@ pub unsafe fn switch_and_link(
         // Push a return address onto our stack and then jump to the return
         // address at the top of the coroutine stack.
         //
-        // From here on execution continues in stack_init_trampoline or the 0:
+        // From here on execution continues in stack_init_trampoline or the 2:
         // label in switch_yield.
         "call [rdx]",
 
@@ -354,7 +354,7 @@ pub unsafe fn switch_and_link(
         // - RSI: The top of the coroutine stack, or 0 if coming from
         //        switch_and_reset.
         // - RDI: The argument passed from the coroutine.
-        "0:",
+        "2:",
 
         "pop rbx",
 
@@ -405,7 +405,7 @@ pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) ->
 
         // Push a return address on the stack. This is the address that will be
         // called by switch_and_link() the next time this context is resumed.
-        "lea rax, [rip + 0f]",
+        "lea rax, [rip + 2f]",
         "push rax",
 
         // Save our stack pointer to RSI, which is then returned out of
@@ -429,7 +429,7 @@ pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) ->
         // - RDX points to the top of our stack, including the return address.
         // - RSI points to the base of our stack.
         // - RDI contains the argument passed from switch_and_link.
-        "0:",
+        "2:",
 
         // Save RBP from the parent context last to create a valid frame record.
         "push rbp",
@@ -513,7 +513,7 @@ pub unsafe fn switch_and_throw(
 
     asm_may_unwind_root!(
         // Save state just like the first half of switch_and_link().
-        "lea rax, [rip + 0f]",
+        "lea rax, [rip + 2f]",
         "push rax",
         "push qword ptr gs:[0x1748]", // GuaranteedStackBytes
         "push qword ptr gs:[0x1478]", // DeallocationStack
@@ -556,7 +556,7 @@ pub unsafe fn switch_and_throw(
 
         // Upon returning, our register state is just like a normal return into
         // switch_and_link().
-        "0:",
+        "2",
 
         // This is copied from the second half of switch_and_link().
         "pop rbx",
