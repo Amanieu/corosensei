@@ -15,6 +15,7 @@
 
 #![allow(unused_macros)]
 
+use crate::arch::Yield;
 use crate::stack::StackPointer;
 use crate::util::EncodedValue;
 
@@ -149,6 +150,10 @@ cfg_if::cfg_if! {
             // the 32-byte shadow space and can use the same registers as
             // the generic x86_64 implementation.
             if #[cfg(target_arch = "x86_64")] {
+                pub type InitialFiberFunc = unsafe extern "sysv64" fn(
+                    sp: StackPointer,
+                    arg: EncodedValue,
+                ) -> !;
                 pub type InitialFunc<T> = unsafe extern "sysv64" fn(
                     arg: EncodedValue,
                     sp: &mut StackPointer,

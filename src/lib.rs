@@ -243,6 +243,8 @@ mod unwind;
 
 mod arch;
 mod coroutine;
+mod execution;
+mod session;
 pub mod stack;
 pub mod trap;
 mod util;

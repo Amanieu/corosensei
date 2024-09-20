@@ -100,11 +100,11 @@
 
 use core::arch::{asm, global_asm};
 
-use super::{allocate_obj_on_stack, push};
+use super::{allocate_obj_on_stack, push, Yield};
 use crate::stack::{Stack, StackPointer};
 use crate::unwind::{
     asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size_root, cfi_reset_args_size_yield,
-    InitialFunc, StackCallFunc, TrapHandler,
+    InitialFiberFunc, InitialFunc, StackCallFunc, TrapHandler,
 };
 use crate::util::EncodedValue;
 
@@ -273,6 +273,71 @@ global_asm!(
     ".cfi_endproc",
     asm_function_end!("stack_call_trampoline"),
 );
+
+global_asm!(
+    ".balign 16",
+    asm_function_begin!("rust_fiber_init"),
+    "push r12",
+    "push r13",
+    "push r14",
+    "push r15",
+    "push rbx",
+    "push rbp",
+    "mov rax, rsp",
+    "mov rsp, rdi",
+    "mov rdi, rax",
+    "jmp rdx",
+    asm_function_end!("rust_fiber_init"),
+);
+
+global_asm!(
+    ".balign 16",
+    asm_function_begin!("rust_fiber_switch"),
+    "push r12",
+    "push r13",
+    "push r14",
+    "push r15",
+    "push rbx",
+    "push rbp",
+    "mov rax, rsp",
+    "mov rsp, rdi",
+    "mov rdx, rsi",
+    "pop rbp",
+    "pop rbx",
+    "pop r15",
+    "pop r14",
+    "pop r13",
+    "pop r12",
+    "ret",
+    asm_function_end!("rust_fiber_switch"),
+);
+
+global_asm!(
+    ".balign 16",
+    asm_function_begin!("rust_fiber_exit"),
+    "xor eax, eax",
+    "mov rsp, rdi",
+    "mov rdx, rsi",
+    "pop rbp",
+    "pop rbx",
+    "pop r15",
+    "pop r14",
+    "pop r13",
+    "pop r12",
+    "ret",
+    asm_function_end!("rust_fiber_exit"),
+);
+
+// Functions are defined in `global_asm` macro invocations to have an access to the return address.
+extern "sysv64" {
+    #[link_name = "rust_fiber_switch"]
+    pub fn fiber_switch(stack_ptr: StackPointer, arg: EncodedValue) -> Yield;
+    #[link_name = "rust_fiber_exit"]
+    pub fn fiber_exit(stack_ptr: StackPointer, arg: EncodedValue) -> !;
+    /// `f` should never panic
+    #[link_name = "rust_fiber_init"]
+    pub fn fiber_init(stack_ptr: StackPointer, arg: EncodedValue, f: InitialFiberFunc) -> Yield;
+}
 
 // These trampolines use a custom calling convention and should only be called
 // with inline assembly.
