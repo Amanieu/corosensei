@@ -1,16 +1,20 @@
-use core::cell::Cell;
+extern crate alloc;
+extern crate std;
+
+use crate::arch::{self, sp, STACK_ALIGNMENT};
+#[cfg(windows)]
+use crate::stack::StackTebFields;
+use crate::stack::{self, DefaultStack, Stack, StackPointer};
+use crate::trap::CoroutineTrapHandler;
+use crate::unwind::{self, initial_func_abi, CaughtPanic, ForcedUnwindErr};
+use crate::util::{self, EncodedValue};
+use alloc::collections::VecDeque;
+use core::cell::{Cell, RefCell};
+use core::ffi::c_void;
 use core::hint::unreachable_unchecked;
 use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
 use core::ptr;
-
-use crate::arch::{self, STACK_ALIGNMENT};
-#[cfg(windows)]
-use crate::stack::StackTebFields;
-use crate::stack::{self, DefaultStack, StackPointer};
-use crate::trap::CoroutineTrapHandler;
-use crate::unwind::{self, initial_func_abi, CaughtPanic, ForcedUnwindErr};
-use crate::util::{self, EncodedValue};
 
 /// Value returned from resuming a coroutine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -81,6 +85,8 @@ pub struct ScopedCoroutine<'a, Input, Yield, Return, Stack: stack::Stack> {
     // None when the coroutine has completed execution.
     stack_ptr: Option<StackPointer>,
 
+    stack_limit_stack: RefCell<VecDeque<usize>>,
+
     // Initial stack pointer value. This is used to detect whether a coroutine
     // has ever been resumed since it was created.
     //
@@ -114,6 +120,10 @@ pub struct ScopedCoroutine<'a, Input, Yield, Return, Stack: stack::Stack> {
 unsafe impl<Input, Yield, Return, Stack: stack::Stack + Sync> Sync
     for ScopedCoroutine<'_, Input, Yield, Return, Stack>
 {
+}
+
+std::thread_local! {
+    static COROUTINE: RefCell<VecDeque<*const c_void>> = const { RefCell::new(VecDeque::new()) };
 }
 
 #[cfg(feature = "default-stack")]
@@ -193,10 +203,12 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
             // coroutine_func. Write the given function object to the stack so
             // its address is passed to coroutine_func on the first resume.
             let stack_ptr = arch::init_stack(&stack, coroutine_func::<Input, Yield, Return, F>, f);
+            let stack_limit = stack.limit().get();
 
             Self {
                 stack,
                 stack_ptr: Some(stack_ptr),
+                stack_limit_stack: RefCell::new(VecDeque::from([stack_limit])),
                 initial_stack_ptr: stack_ptr,
                 drop_fn: drop_fn::<F>,
                 marker: PhantomData,
@@ -250,8 +262,10 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
         self.stack_ptr = None;
 
         let mut input = ManuallyDrop::new(input);
+        Self::init_current(self);
         let (result, stack_ptr) =
             arch::switch_and_link(util::encode_val(&mut input), stack_ptr, self.stack.base());
+        Self::clean_current();
         self.stack_ptr = stack_ptr;
 
         // Decode the returned value depending on whether the coroutine
@@ -433,6 +447,131 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
             marker: PhantomData,
         }
     }
+
+    /// Init the current.
+    fn init_current(current: &Self) {
+        COROUTINE.with(|s| {
+            s.borrow_mut()
+                .push_front(current as *const Self as *const _ as *const c_void);
+        });
+    }
+
+    /// Get the current if it has.
+    pub fn current<'current>() -> Option<&'current Self> {
+        COROUTINE.with(|s| {
+            s.borrow()
+                .front()
+                .map(|ptr| unsafe { &*(*ptr).cast::<Self>() })
+        })
+    }
+
+    /// Clean the current.
+    fn clean_current() {
+        COROUTINE.with(|s| _ = s.borrow_mut().pop_front());
+    }
+
+    /// Queries the amount of remaining stack as interpreted by this coroutine.
+    ///
+    /// This function will return the amount of stack space left which will be used
+    /// to determine whether a stack switch should be made or not.
+    ///
+    /// # Safety
+    ///
+    /// This can only be done safely if this coroutine is not finished.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use corosensei::stack::DefaultStack;
+    /// use corosensei::{Coroutine, CoroutineResult, ScopedCoroutine};
+    /// use std::cell::RefCell;
+    /// use std::collections::VecDeque;
+    /// use std::ffi::c_void;
+    ///
+    /// thread_local! {
+    ///     static CURRENT: RefCell<VecDeque<*const c_void>> = const { RefCell::new(VecDeque::new()) };
+    /// }
+    /// let mut coroutine = Coroutine::new(|yielder, ()| {
+    ///     for _ in 0..5 {
+    ///         if let Some(co) = CURRENT.with(|s| {
+    ///             s.borrow().front().map(|ptr| unsafe {
+    ///                 &*(*ptr).cast::<ScopedCoroutine<(), (), (), DefaultStack>>()
+    ///             })
+    ///         }) {
+    ///             // safe
+    ///             assert!(unsafe { co.remaining_stack() } > 0);
+    ///         }
+    ///         yielder.suspend(());
+    ///     }
+    /// });
+    /// // init current
+    /// CURRENT.with(|s| {
+    ///     s.borrow_mut()
+    ///         .push_front(core::ptr::from_ref(&coroutine).cast::<c_void>());
+    /// });
+    /// // safe
+    /// assert!(unsafe { coroutine.remaining_stack() } > 0);
+    /// loop {
+    ///     if let CoroutineResult::Return(()) = coroutine.resume(()) {
+    ///         break;
+    ///     }
+    ///     // safe
+    ///     assert!(unsafe { coroutine.remaining_stack() } > 0);
+    /// }
+    /// // clean current
+    /// CURRENT.with(|s| _ = s.borrow_mut().pop_front());
+    /// // unsafe
+    /// // assert!(unsafe { coroutine.remaining_stack() } > 0);
+    /// ```
+    pub unsafe fn remaining_stack(&self) -> usize {
+        let limit = self
+            .stack_limit_stack
+            .borrow()
+            .front()
+            .copied()
+            .expect("no stack limit found");
+        self.stack_ptr
+            .unwrap_or_else(sp)
+            .get()
+            .saturating_sub(limit)
+    }
+
+    /// Grows the call stack if necessary.
+    ///
+    /// This function is intended to be called at manually instrumented points in a program where
+    /// recursion is known to happen quite a bit. This function will check to see if we're within
+    /// `red_zone` bytes of the end of the stack, and if so it will allocate a new stack of at least
+    /// `stack_size` bytes.
+    ///
+    /// The closure `f` is guaranteed to run on a stack with at least `red_zone` bytes, and it will be
+    /// run on the current stack if there's space available.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub fn maybe_grow<R, F: FnOnce() -> R>(
+        red_zone: usize,
+        stack_size: usize,
+        callback: F,
+    ) -> std::io::Result<R> {
+        // if we can't guess the remaining stack (unsupported on some platforms) we immediately grow
+        // the stack and then cache the new stack size (which we do know now because we allocated it.
+        if let Some(co) = Self::current() {
+            if unsafe { co.remaining_stack() } >= red_zone {
+                return Ok(callback());
+            }
+            return DefaultStack::new(stack_size).map(|stack| {
+                co.stack_limit_stack
+                    .borrow_mut()
+                    .push_front(stack.limit().get());
+                let r = on_stack(stack, callback);
+                _ = co.stack_limit_stack.borrow_mut().pop_front();
+                r
+            });
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "unsupported in thread",
+        ))
+    }
 }
 
 impl<'a, Input, Yield, Return, Stack: stack::Stack> Drop
@@ -521,7 +660,7 @@ impl<Input, Yield> Yielder<Input, Yield> {
 ///
 /// Any panics in the provided closure are automatically propagated back up to
 /// the caller of this function.
-pub fn on_stack<F, R>(stack: impl stack::Stack, f: F) -> R
+pub fn on_stack<F, R>(stack: impl Stack, f: F) -> R
 where
     F: FnOnce() -> R,
 {

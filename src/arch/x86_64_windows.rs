@@ -721,3 +721,16 @@ pub unsafe fn on_stack<S: Stack>(arg: *mut u8, stack: S, f: StackCallFunc) {
         clobber_abi("sysv64"),
     );
 }
+
+#[inline]
+pub fn sp() -> StackPointer {
+    let ret_sp;
+    unsafe {
+        asm!(
+            "mov {0}, rsp",
+            out(reg) ret_sp,
+            options(nomem, nostack, preserves_flags)
+        );
+        StackPointer::new_unchecked(ret_sp)
+    }
+}

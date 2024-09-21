@@ -838,3 +838,16 @@ pub unsafe fn reset_seh_handler(parent_link: *mut StackPointer) {
     // coroutine.
     asm!("mov fs:[0x0], {}", in(reg) exception_record, options(nostack, preserves_flags));
 }
+
+#[inline]
+pub fn sp() -> StackPointer {
+    let ret_sp;
+    unsafe {
+        asm!(
+            "mov {0}, esp",
+            out(reg) ret_sp,
+            options(nomem, nostack, preserves_flags)
+        );
+        StackPointer::new_unchecked(ret_sp)
+    }
+}
