@@ -302,7 +302,7 @@ global_asm!(
     "push rbp",
     "mov rax, rsp",
     "mov rsp, rdi",
-    "mod rdi, rax",
+    "mov rdi, rax",
     "pop rbp",
     "pop rbx",
     "pop r15",
