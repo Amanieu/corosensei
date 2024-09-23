@@ -174,7 +174,7 @@ cfg_if::cfg_if! {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Yield {
-    pub sp: usize,
+    pub sp: StackPointer,
     pub val: EncodedValue,
 }
 

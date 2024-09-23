@@ -244,12 +244,12 @@ mod unwind;
 mod arch;
 mod coroutine;
 mod execution;
-mod session;
 pub mod stack;
 pub mod trap;
 mod util;
 
 pub use coroutine::*;
+pub use execution::*;
 
 #[cfg(test)]
 mod tests;

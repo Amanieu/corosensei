@@ -15,7 +15,8 @@
 
 #![allow(unused_macros)]
 
-use crate::arch::Yield;
+use core::ffi;
+
 use crate::stack::StackPointer;
 use crate::util::EncodedValue;
 
@@ -154,6 +155,11 @@ cfg_if::cfg_if! {
                     sp: StackPointer,
                     arg: EncodedValue,
                 ) -> !;
+                pub type SwitchFiberFunc = unsafe extern "sysv64" fn(
+                    sp: StackPointer,
+                    arg: EncodedValue,
+                    obj: *mut ffi::c_void,
+                );
                 pub type InitialFunc<T> = unsafe extern "sysv64" fn(
                     arg: EncodedValue,
                     sp: &mut StackPointer,
@@ -163,6 +169,11 @@ cfg_if::cfg_if! {
                     unsafe extern "sysv64" fn(val: *mut T, parent_link: *mut StackPointer) -> !;
                 pub type StackCallFunc = unsafe extern "sysv64" fn(ptr: *mut u8);
                 macro_rules! initial_func_abi {
+                    (unsafe fn $($tt:tt)*) => {
+                        unsafe extern "sysv64" fn $($tt)*
+                    }
+                }
+                macro_rules! fiber_func_abi {
                     (unsafe fn $($tt:tt)*) => {
                         unsafe extern "sysv64" fn $($tt)*
                     }
@@ -348,5 +359,5 @@ cfg_if::cfg_if! {
 #[allow(unused_imports)]
 pub(crate) use {
     asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size, cfi_reset_args_size_root,
-    cfi_reset_args_size_yield, initial_func_abi,
+    cfi_reset_args_size_yield, fiber_func_abi, initial_func_abi,
 };
