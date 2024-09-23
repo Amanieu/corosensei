@@ -23,39 +23,41 @@ pub struct Execution<Yield> {
 
 impl<Yield> Execution<Yield> {
     #[cfg(feature = "default-stack")]
-    pub fn new<F, Q, Return>(f: F) -> Self
+    pub fn new<F, Q, YieldBack, Return>(f: F) -> Self
     where
-        F: FnOnce(Execution<Yield>) -> (Execution<Return>, Q) + 'static,
+        F: FnOnce(Execution<YieldBack>) -> (Execution<Return>, Q) + 'static,
         Q: FnOnce(DefaultStack) -> Return + 'static,
         Return: 'static,
         Yield: 'static,
+        YieldBack: 'static,
     {
         Execution::with_stack(f, DefaultStack::default())
     }
 
-    pub fn with_stack<F, Q, Return, Stack>(f: F, stack: Stack) -> Self
+    pub fn with_stack<F, Q, Return, YieldBack, Stack>(f: F, stack: Stack) -> Self
     where
-        F: FnOnce(Execution<Yield>) -> (Execution<Return>, Q) + 'static,
+        F: FnOnce(Execution<YieldBack>) -> (Execution<Return>, Q) + 'static,
         Q: FnOnce(Stack) -> Return + 'static,
         Return: 'static,
         Yield: 'static,
+        YieldBack: 'static,
         Stack: stack::Stack + 'static,
     {
         fiber_func_abi! {
-            unsafe fn entry<F, Q, Return, Stack, Yield>(sp: StackPointer, arg: EncodedValue) -> !
+            unsafe fn entry<F, Q, Return, Stack, YieldBack>(sp: StackPointer, arg: EncodedValue) -> !
             where
-                F: FnOnce(Execution<Yield>) -> (Execution<Return>, Q) + 'static,
+                F: FnOnce(Execution<YieldBack>) -> (Execution<Return>, Q) + 'static,
                 Q: FnOnce(Stack) -> Return + 'static,
                 Return: 'static,
-                Yield: 'static,
+                YieldBack: 'static,
                 Stack: stack::Stack + 'static,
             {
-                let InitialPayload { function, stack } = decode_val::<InitialPayload<F, Stack>>(arg);
                 let _guard = scopeguard::guard((), |()| {
                     panic!("execution panicked, aborting...");
                 });
 
-                let execution = Execution {
+                let InitialPayload { function, stack } = decode_val::<InitialPayload<F, Stack>>(arg);
+                let execution = Execution::<()> {
                     sp,
                     _arg: PhantomData,
                 };
@@ -71,16 +73,16 @@ impl<Yield> Execution<Yield> {
         let mut payload = mem::ManuallyDrop::new(InitialPayload { function: f, stack });
         let arg = unsafe { encode_val(&mut payload) };
         let arch::Yield { sp, val: _ } =
-            unsafe { arch::fiber_init(sp, arg, entry::<F, Q, Return, Stack, Yield>) };
+            unsafe { arch::fiber_init(sp, arg, entry::<F, Q, Return, Stack, YieldBack>) };
         Execution {
             sp,
             _arg: PhantomData,
         }
     }
 
-    pub fn switch<NewYield, F>(self, f: F) -> NewYield
+    pub fn switch<YieldBack, F>(self, f: F) -> YieldBack
     where
-        F: FnOnce(Execution<NewYield>) -> Yield + 'static,
+        F: FnOnce(Execution<YieldBack>) -> Yield + 'static,
     {
         fiber_func_abi! {
             unsafe fn switcheroo<F, Yield, NewYield>(sp: StackPointer, arg: EncodedValue, ret: *mut ffi::c_void)
@@ -99,7 +101,7 @@ impl<Yield> Execution<Yield> {
             }
         }
 
-        let mut output = mem::MaybeUninit::<NewYield>::uninit();
+        let mut output = mem::MaybeUninit::<YieldBack>::uninit();
         let Execution { sp, .. } = self;
         let mut payload = mem::ManuallyDrop::new(SwitchPayload { function: f });
         unsafe {
@@ -107,7 +109,7 @@ impl<Yield> Execution<Yield> {
             arch::fiber_switch(
                 sp,
                 arg,
-                switcheroo::<F, Yield, NewYield>,
+                switcheroo::<F, Yield, YieldBack>,
                 output.as_mut_ptr().cast::<ffi::c_void>(),
             );
             output.assume_init()
