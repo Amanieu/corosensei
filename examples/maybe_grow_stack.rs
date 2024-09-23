@@ -20,6 +20,7 @@ fn main() {
             recurse(50, &mut [0; 10000]);
         },
     );
+    coroutine.set_growable(true);
     assert_eq!(coroutine.resume(()), CoroutineResult::Return(()));
 }
 

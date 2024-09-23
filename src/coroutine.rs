@@ -85,6 +85,9 @@ pub struct ScopedCoroutine<'a, Input, Yield, Return, Stack: stack::Stack> {
     // None when the coroutine has completed execution.
     stack_ptr: Option<StackPointer>,
 
+    // `true` means that the stack can grow.
+    growable: bool,
+
     stack_limit_stack: RefCell<VecDeque<usize>>,
 
     // Initial stack pointer value. This is used to detect whether a coroutine
@@ -174,7 +177,7 @@ impl<'a, Input, Yield, Return> ScopedCoroutine<'a, Input, Yield, Return, Default
         }
         Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
-            "unsupported in thread",
+            "try `set_growable` to make the coroutine growable, or if this method is unsupported on threads",
         ))
     }
 }
@@ -245,6 +248,7 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
             Self {
                 stack,
                 stack_ptr: Some(stack_ptr),
+                growable: false,
                 stack_limit_stack: RefCell::new(VecDeque::from([stack_limit])),
                 initial_stack_ptr: stack_ptr,
                 drop_fn: drop_fn::<F>,
@@ -299,10 +303,14 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
         self.stack_ptr = None;
 
         let mut input = ManuallyDrop::new(input);
-        Self::init_current(self);
+        if self.growable {
+            Self::init_current(self);
+        }
         let (result, stack_ptr) =
             arch::switch_and_link(util::encode_val(&mut input), stack_ptr, self.stack.base());
-        Self::clean_current();
+        if self.growable {
+            Self::clean_current();
+        }
         self.stack_ptr = stack_ptr;
 
         // Decode the returned value depending on whether the coroutine
@@ -494,7 +502,10 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
     }
 
     /// Get the current if it has.
-    pub fn current<'current>() -> Option<&'current Self> {
+    ///
+    /// Note: since `growable` is configurable, there may be situations where it is
+    /// used incorrectly, so this method is not exposed to the public.
+    fn current<'current>() -> Option<&'current Self> {
         COROUTINE.with(|s| {
             s.borrow()
                 .front()
@@ -505,6 +516,11 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
     /// Clean the current.
     fn clean_current() {
         COROUTINE.with(|s| _ = s.borrow_mut().pop_front());
+    }
+
+    /// Sets whether the stack can grow.
+    pub fn set_growable(&mut self, growable: bool) {
+        self.growable = growable;
     }
 
     /// Queries the amount of remaining stack as interpreted by this coroutine.
