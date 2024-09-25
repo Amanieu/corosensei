@@ -154,6 +154,7 @@ cfg_if::cfg_if! {
                 pub type InitialFiberFunc = unsafe extern "sysv64" fn(
                     sp: StackPointer,
                     arg: EncodedValue,
+                    obj: *mut ffi::c_void,
                 ) -> !;
                 pub type SwitchFiberFunc = unsafe extern "sysv64" fn(
                     sp: StackPointer,
@@ -173,7 +174,12 @@ cfg_if::cfg_if! {
                         unsafe extern "sysv64" fn $($tt)*
                     }
                 }
-                macro_rules! fiber_func_abi {
+                macro_rules! fiber_init_func_abi {
+                    (unsafe fn $($tt:tt)*) => {
+                        unsafe extern "sysv64" fn $($tt)*
+                    }
+                }
+                macro_rules! fiber_switch_func_abi {
                     (unsafe fn $($tt:tt)*) => {
                         unsafe extern "sysv64" fn $($tt)*
                     }
@@ -359,5 +365,5 @@ cfg_if::cfg_if! {
 #[allow(unused_imports)]
 pub(crate) use {
     asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size, cfi_reset_args_size_root,
-    cfi_reset_args_size_yield, fiber_func_abi, initial_func_abi,
+    cfi_reset_args_size_yield, fiber_init_func_abi, initial_func_abi,
 };

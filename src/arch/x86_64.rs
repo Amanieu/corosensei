@@ -277,22 +277,6 @@ global_asm!(
 
 global_asm!(
     ".balign 16",
-    asm_function_begin!("rust_fiber_init"),
-    "push r12",
-    "push r13",
-    "push r14",
-    "push r15",
-    "push rbx",
-    "push rbp",
-    "mov rax, rsp",
-    "mov rsp, rdi",
-    "mov rdi, rax",
-    "jmp rdx",
-    asm_function_end!("rust_fiber_init"),
-);
-
-global_asm!(
-    ".balign 16",
     asm_function_begin!("rust_fiber_switch"),
     "push r12",
     "push r13",
@@ -309,7 +293,7 @@ global_asm!(
     "pop r14",
     "pop r13",
     "pop r12",
-    "jmp rdx",
+    "jmp rcx",
     asm_function_end!("rust_fiber_switch"),
 );
 
@@ -319,12 +303,9 @@ extern "sysv64" {
     pub fn fiber_switch(
         stack_ptr: StackPointer,
         arg: EncodedValue,
-        f: SwitchFiberFunc,
         ret: *mut ffi::c_void,
+        f: SwitchFiberFunc,
     );
-    /// `f` should never panic
-    #[link_name = "rust_fiber_init"]
-    pub fn fiber_init(stack_ptr: StackPointer, arg: EncodedValue, f: InitialFiberFunc) -> Yield;
 }
 
 // These trampolines use a custom calling convention and should only be called
@@ -334,6 +315,24 @@ extern "C" {
     static stack_init_trampoline_return: [u8; 0];
     #[allow(dead_code)]
     fn stack_call_trampoline(arg: *mut u8, sp: StackPointer, f: StackCallFunc);
+}
+
+#[inline]
+pub unsafe fn fiber_init_stack(stack: &impl Stack) -> StackPointer {
+    let mut sp = stack.base().get();
+    let bp = sp as StackWord;
+
+    // Zero initialize return pointer
+    push(&mut sp, Some(0));
+    // Save stack pointer as rbp
+    push(&mut sp, Some(bp));
+    // Zero initialize five registers: rbx, r15, r14, r13, r12.
+    // rbx is reserved by LLVM, but we produce "sysv64" ABI functions for which LLVM cannot infer
+    // external meaning of rbx.
+    for _ in 0..5 {
+        push(&mut sp, Some(0));
+    }
+    StackPointer::new_unchecked(sp)
 }
 
 /// Sets up the initial state on a stack so that the given function is
