@@ -1,7 +1,5 @@
 use core::mem;
 
-use crate::{stack::StackPointer, util::EncodedValue};
-
 // Helper macros to deal with platform-specific differences in assembly code
 // between ELF, Mach-O and COFF file formats.
 cfg_if::cfg_if! {
@@ -169,13 +167,6 @@ cfg_if::cfg_if! {
     } else {
         compile_error!("Unsupported target");
     }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct Yield {
-    pub sp: StackPointer,
-    pub val: EncodedValue,
 }
 
 /// Helper function to push a value onto a stack.

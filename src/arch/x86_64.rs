@@ -99,13 +99,14 @@
 //! ```
 
 use core::arch::{asm, global_asm};
-use core::ffi;
+use core::convert::Infallible;
+use core::{ffi, ptr};
 
-use super::{allocate_obj_on_stack, push, Yield};
+use super::{allocate_obj_on_stack, push};
 use crate::stack::{Stack, StackPointer};
 use crate::unwind::{
     asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size_root, cfi_reset_args_size_yield,
-    InitialFiberFunc, InitialFunc, StackCallFunc, SwitchFiberFunc, TrapHandler,
+    InitialFunc, StackCallFunc, SwitchFiberFunc, TrapHandler,
 };
 use crate::util::EncodedValue;
 
@@ -278,6 +279,7 @@ global_asm!(
 global_asm!(
     ".balign 16",
     asm_function_begin!("rust_fiber_switch"),
+    "push rdx",
     "push r12",
     "push r13",
     "push r14",
@@ -293,6 +295,7 @@ global_asm!(
     "pop r14",
     "pop r13",
     "pop r12",
+    "pop rdx",
     "jmp rcx",
     asm_function_end!("rust_fiber_switch"),
 );
@@ -324,14 +327,19 @@ pub unsafe fn fiber_init_stack(stack: &impl Stack) -> StackPointer {
 
     // Zero initialize return pointer
     push(&mut sp, Some(0));
-    // Save stack pointer as rbp
-    push(&mut sp, Some(bp));
+    // Out pointer rdx (never written to)
+    push(
+        &mut sp,
+        Some(ptr::NonNull::<Infallible>::dangling().as_ptr() as StackWord),
+    );
     // Zero initialize five registers: rbx, r15, r14, r13, r12.
     // rbx is reserved by LLVM, but we produce "sysv64" ABI functions for which LLVM cannot infer
     // external meaning of rbx.
     for _ in 0..5 {
         push(&mut sp, Some(0));
     }
+    // Save stack pointer as rbp
+    push(&mut sp, Some(bp));
     StackPointer::new_unchecked(sp)
 }
 

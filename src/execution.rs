@@ -1,9 +1,9 @@
-use core::{ffi, marker::PhantomData, mem};
+use core::{convert::Infallible, ffi, marker::PhantomData, mem};
 
 use crate::{
     arch,
     stack::{self, DefaultStack, StackPointer},
-    unwind::fiber_init_func_abi,
+    unwind::fiber_switch_func_abi,
     util::{decode_val, encode_val, EncodedValue},
 };
 
@@ -37,7 +37,7 @@ impl<Arg> Execution<Arg> {
         Stack: stack::Stack + 'static,
     {
         let sp = unsafe { arch::fiber_init_stack(&stack) };
-        let exec = Execution {
+        let exec = Execution::<Infallible> {
             sp,
             _arg: PhantomData,
         };
@@ -47,8 +47,8 @@ impl<Arg> Execution<Arg> {
                 panic!("execution panicked, aborting...");
             });
 
-            let execution = execution.switch(core::convert::identity);
-            let (execution, exit) = f(execution);
+            let input = execution.switch(core::convert::identity);
+            let (execution, exit) = f(input);
             let () = execution.switch(|_| exit(stack));
             // Stack is no longer used, but we do not want to return
             unreachable!("switched back to the finished execution")
@@ -59,27 +59,27 @@ impl<Arg> Execution<Arg> {
     where
         F: FnOnce(Execution<YieldBack>) -> Arg + 'static,
     {
-        // fiber_func_abi! {
-        // TODO: unwind support
-        unsafe extern "sysv64" fn switcheroo<F, Yield, NewYield>(
-            sp: StackPointer,
-            arg: EncodedValue,
-            ret: *mut ffi::c_void,
-        ) where
-            F: FnOnce(Execution<NewYield>) -> Yield + 'static,
-        {
-            let guard = scopeguard::guard((), |()| {
-                panic!("execution panicked, aborting...");
-            });
-            let SwitchPayload { function } = decode_val::<SwitchPayload<F>>(arg);
-            let execution = Execution {
-                sp,
-                _arg: PhantomData,
-            };
-            ret.cast::<Yield>().write(function(execution));
-            mem::forget(guard);
+        fiber_switch_func_abi! {
+            unsafe fn switcheroo<Arg, YieldBack, F>(
+                sp: StackPointer,
+                arg: EncodedValue,
+                ret: *mut ffi::c_void,
+            ) where
+                F: FnOnce(Execution<YieldBack>) -> Arg + 'static,
+            {
+                // TODO: unwind support?
+                let guard = scopeguard::guard((), |()| {
+                    panic!("execution panicked, aborting...");
+                });
+                let SwitchPayload { function } = decode_val::<SwitchPayload<F>>(arg);
+                let execution = Execution {
+                    sp,
+                    _arg: PhantomData,
+                };
+                ret.cast::<Arg>().write(function(execution));
+                mem::forget(guard);
+            }
         }
-        // }
 
         let mut output = mem::MaybeUninit::<YieldBack>::uninit();
         let Execution { sp, .. } = self;
@@ -90,7 +90,7 @@ impl<Arg> Execution<Arg> {
                 sp,
                 arg,
                 output.as_mut_ptr().cast::<ffi::c_void>(),
-                switcheroo::<F, Arg, YieldBack>,
+                switcheroo::<Arg, YieldBack, F>,
             );
             output.assume_init()
         }
