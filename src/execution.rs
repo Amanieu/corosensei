@@ -14,6 +14,8 @@ struct SwitchPayload<F> {
 pub struct Execution<Yield> {
     sp: StackPointer,
     _arg: PhantomData<fn(fn(Self) -> Yield)>,
+    _thread_unsafe: PhantomData<*mut ()>,
+    _unwind_unsafe: PhantomData<&'static mut ()>,
 }
 
 impl<Arg> Execution<Arg> {
@@ -40,6 +42,8 @@ impl<Arg> Execution<Arg> {
         let exec = Execution::<Infallible> {
             sp,
             _arg: PhantomData,
+            _thread_unsafe: PhantomData,
+            _unwind_unsafe: PhantomData,
         };
         // Never return from this as this is the "main" function of any `Execution`
         exec.switch(|execution| {
@@ -75,6 +79,8 @@ impl<Arg> Execution<Arg> {
                 let execution = Execution {
                     sp,
                     _arg: PhantomData,
+                    _thread_unsafe: PhantomData,
+                    _unwind_unsafe: PhantomData,
                 };
                 ret.cast::<Arg>().write(function(execution));
                 mem::forget(guard);
