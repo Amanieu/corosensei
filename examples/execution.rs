@@ -17,28 +17,26 @@ impl Arg {
 }
 
 fn main() {
-    println!("[main] creating coroutine");
+    println!("[main] creating execution");
 
-    let mut exec = Execution::new(|arg: Arg| {
-        let ret = |_| None;
-        let Arg { mut exec, i } = arg;
-        println!("[coroutine] coroutine started with input {}", i);
+    let mut exec = Execution::new(|Arg { mut exec, i }| {
+        println!("[execution] execution started with input {}", i);
         for mut i in 0..5 {
-            println!("[coroutine] yielding {}", i);
+            println!("[execution] yielding {}", i);
             Arg { exec, i } = exec.switch(move |exec| Some(Yield { exec, i }));
-            println!("[coroutine] got {} from parent", i)
+            println!("[execution] got {} from parent", i)
         }
-        println!("[coroutine] exiting coroutine");
-        (exec, ret)
+        println!("[execution] exiting execution");
+        (exec, |_| None)
     });
 
     let mut counter = 100;
     loop {
-        println!("[main] resuming coroutine with argument {}", counter);
+        println!("[main] resuming execution with argument {}", counter);
         match exec.switch(move |exec| Arg::new(exec, counter)) {
             Some(Yield { exec: new, i }) => {
                 exec = new;
-                println!("[main] got {:?} from coroutine", i)
+                println!("[main] got {:?} from execution", i)
             }
             None => break,
         }
