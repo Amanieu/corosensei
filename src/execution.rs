@@ -19,6 +19,9 @@ pub struct Execution<Yield> {
 }
 
 impl<Arg> Execution<Arg> {
+    /// Create a new `Execution`.
+    ///
+    /// For more details see [`Execution::with_stack`].
     #[cfg(feature = "default-stack")]
     pub fn new<F, Q, Return>(f: F) -> Self
     where
@@ -30,6 +33,12 @@ impl<Arg> Execution<Arg> {
         Execution::with_stack(f, DefaultStack::default())
     }
 
+    /// Create a new `Execution` with some specified `stack`.
+    ///
+    /// Takes `stack` and initializes it to be ready for the initial switch, but doesn't call the `f` closure argument yet.
+    /// Closure `f` is expected to return a pair of two objects: an `Execution` to switch to after `f` returns, and a closure of type `Q` that is run on that `Execution`'s stack.
+    /// The `Q` closure converts previously used stack into some payload of type `Return`.
+    /// It has similar purpose as the input closure of [`Execution::switch`], see its documentation for more details.
     pub fn with_stack<F, Q, Return, Stack>(f: F, stack: Stack) -> Self
     where
         F: FnOnce(Arg) -> (Execution<Return>, Q) + 'static,
