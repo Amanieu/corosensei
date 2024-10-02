@@ -1,17 +1,17 @@
-use corosensei::Execution;
+use corosensei::Fiber;
 
 struct Arg {
-    exec: Execution<Option<Yield>>,
+    exec: Fiber<Option<Yield>>,
     i: i32,
 }
 
 struct Yield {
-    exec: Execution<Arg>,
+    exec: Fiber<Arg>,
     i: i32,
 }
 
 impl Arg {
-    fn new(exec: Execution<Option<Yield>>, input: i32) -> Self {
+    fn new(exec: Fiber<Option<Yield>>, input: i32) -> Self {
         Self { exec, i: input }
     }
 }
@@ -19,7 +19,7 @@ impl Arg {
 fn main() {
     println!("[main] creating execution");
 
-    let mut exec = Execution::new(|Arg { mut exec, i }| {
+    let mut exec = Fiber::new(|Arg { mut exec, i }| {
         println!("[execution] execution started with input {}", i);
         for mut i in 0..5 {
             println!("[execution] yielding {}", i);
