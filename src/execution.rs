@@ -11,6 +11,19 @@ struct SwitchPayload<F> {
     function: F,
 }
 
+/// A suspended execution
+///
+/// This type represents a lightweight thread of execution or a [fiber] in its suspended state.
+/// Every fiber logically owns a [program stack] it uses during the execution.
+/// However dropping a `Fiber` object simply leaks.
+/// The only way to free its resources such as its program stack is for call of the closure it was initialized with to return.
+/// As such any running execution context can be converted into a `Fiber` (see [`Fiber::switch`]), even if its the [main function].
+///
+/// These restrictions might seem limiting due to this design trying to be minimalistic so that any reasonable functionallity can be added after using safe Rust.
+///
+/// [fiber]: https://en.wikipedia.org/wiki/Fiber_(computer_science)
+/// [program stack]: https://en.wikipedia.org/wiki/Call_stack
+/// [main function]: https://en.wikipedia.org/wiki/Entry_point
 pub struct Fiber<Yield> {
     sp: StackPointer,
     _arg: PhantomData<fn(fn(Self) -> Yield)>,
@@ -20,6 +33,8 @@ pub struct Fiber<Yield> {
 
 impl<Arg> Fiber<Arg> {
     /// Create a new `Fiber`.
+    ///
+    /// Create a fiber by using a default-initialized [`DefaultStack`] instance.
     ///
     /// For more details see [`Fiber::with_stack`].
     #[cfg(feature = "default-stack")]
@@ -33,12 +48,16 @@ impl<Arg> Fiber<Arg> {
         Fiber::with_stack(f, DefaultStack::default())
     }
 
-    /// Create a new `Fiber` with some specified `stack`.
+    /// Create a new `Fiber` with some specified `stack`
     ///
-    /// Takes `stack` and initializes it to be ready for the initial switch, but doesn't call the `f` closure argument yet.
+    /// Initializes the stack to be ready for the initial switch, but doesn't call the `f` closure argument yet.
     /// Closure `f` is expected to return a pair of two objects: an `Fiber` to switch to after `f` returns, and a closure of type `Q` that is run on that `Fiber`'s stack.
     /// The `Q` closure converts previously used stack into some payload of type `Return`.
     /// It has similar purpose as the input closure of [`Fiber::switch`], see its documentation for more details.
+    ///
+    /// # Unwinding
+    ///
+    /// If call to `f` ever panics or unwinds then the entire process is aborted.
     pub fn with_stack<F, Q, Return, Stack>(f: F, stack: Stack) -> Self
     where
         F: FnOnce(Arg) -> (Fiber<Return>, Q) + 'static,
@@ -68,9 +87,21 @@ impl<Arg> Fiber<Arg> {
         })
     }
 
-    pub fn switch<YieldBack, F>(self, f: F) -> YieldBack
+    /// Context switch
+    ///
+    /// Switch or jump to a different `Fiber`. Suspends the current execution, then resumes `self` fiber and calls the `intermediate` closure, while passing previous execution as another `Fiber`.
+    /// The `YieldBack` generic type argument
+    ///
+    /// The `intermediate` closure in intended to convert previous fiber into the custom `Arg` type, allowing the use of caller's generic types during it.
+    /// Call to the `intermediate` closure happens on the `self` fiber instead of within the current execution, just because closure's `Fiber` argument must already represent this execution in the suspended state.
+    ///
+    /// # Unwind
+    ///
+    /// If call to `f` ever panics or unwinds by other means, then the process is aborted.
+    pub fn switch<YieldBack, F>(self, intermediate: F) -> YieldBack
     where
         F: FnOnce(Fiber<YieldBack>) -> Arg + 'static,
+        Arg: 'static,
     {
         fiber_switch_func_abi! {
             unsafe fn switcheroo<Arg, YieldBack, F>(
@@ -98,7 +129,9 @@ impl<Arg> Fiber<Arg> {
 
         let mut output = mem::MaybeUninit::<YieldBack>::uninit();
         let Fiber { sp, .. } = self;
-        let mut payload = mem::ManuallyDrop::new(SwitchPayload { function: f });
+        let mut payload = mem::ManuallyDrop::new(SwitchPayload {
+            function: intermediate,
+        });
         unsafe {
             let arg = encode_val(&mut payload);
             arch::fiber_switch(
