@@ -172,19 +172,27 @@ fn main() {
 ```text
    0: backtrace::main::{{closure}}
              at examples/backtrace.rs:11:21
-      corosensei::coroutine::ScopedCoroutine<Input,Yield,Return,Stack>::with_stack::coroutine_func::{{closure}}
-             at src/coroutine.rs:174:62
+      corosensei::coroutine::Coroutine<Input,Yield,Return,Stack>::with_stack::coroutine_func::{{closure}}
+             at src/coroutine.rs:163:62
+      <core::panic::unwind_safe::AssertUnwindSafe<F> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/8f9080db423ca0fb6bef0686ce9a93940cdf1f13/library/core/src/panic/unwind_safe.rs:272:9
+      std::panicking::try::do_call
+             at /rustc/8f9080db423ca0fb6bef0686ce9a93940cdf1f13/library/std/src/panicking.rs:559:40
+      std::panicking::try
+             at /rustc/8f9080db423ca0fb6bef0686ce9a93940cdf1f13/library/std/src/panicking.rs:523:19
+   1: std::panic::catch_unwind
+             at /rustc/8f9080db423ca0fb6bef0686ce9a93940cdf1f13/library/std/src/panic.rs:149:14
       corosensei::unwind::catch_unwind_at_root
-             at src/unwind.rs:43:16
-   1: corosensei::coroutine::ScopedCoroutine<Input,Yield,Return,Stack>::with_stack::coroutine_func
-             at src/coroutine.rs:174:30
+             at src/unwind.rs:227:13
+      corosensei::coroutine::Coroutine<Input,Yield,Return,Stack>::with_stack::coroutine_func
+             at src/coroutine.rs:163:30
    2: stack_init_trampoline
    3: corosensei::arch::x86_64::switch_and_link
-             at src/arch/x86_64.rs:302:5
-      corosensei::coroutine::ScopedCoroutine<Input,Yield,Return,Stack>::resume_inner
-             at src/coroutine.rs:256:13
-      corosensei::coroutine::ScopedCoroutine<Input,Yield,Return,Stack>::resume
-             at src/coroutine.rs:235:19
+             at src/unwind.rs:137:17
+      corosensei::coroutine::Coroutine<Input,Yield,Return,Stack>::resume_inner
+             at src/coroutine.rs:239:13
+      corosensei::coroutine::Coroutine<Input,Yield,Return,Stack>::resume
+             at src/coroutine.rs:218:19
       backtrace::sub_function
              at examples/backtrace.rs:6:5
    4: backtrace::main

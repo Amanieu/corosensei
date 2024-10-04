@@ -1,4 +1,4 @@
-//! Utilities for working with [`ScopedCoroutine::trap_handler`].
+//! Utilities for working with [`Coroutine::trap_handler`].
 
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
@@ -7,7 +7,7 @@ pub use crate::arch::TrapHandlerRegs;
 use crate::stack::StackPointer;
 use crate::unwind::initial_func_abi;
 #[cfg(doc)]
-use crate::ScopedCoroutine; // For rustdoc to resolve doc-links
+use crate::Coroutine; // For rustdoc to resolve doc-links
 use crate::{arch, util};
 
 /// Helper type to force a trapping coroutine to return from a trap handler.
@@ -16,7 +16,7 @@ use crate::{arch, util};
 /// thread-local storage for access by a trap handler. However it is UB to call
 /// `setup_trap_return` past the lifetime of the originating coroutine.
 ///
-/// See [`ScopedCoroutine::trap_handler`] for more details.
+/// See [`Coroutine::trap_handler`] for more details.
 #[derive(Clone, Copy)]
 pub struct CoroutineTrapHandler<Return> {
     pub(crate) stack_base: StackPointer,

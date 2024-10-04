@@ -5,9 +5,11 @@ use core::mem::{self, ManuallyDrop};
 use core::ptr;
 
 use crate::arch::{self, STACK_ALIGNMENT};
+#[cfg(feature = "default-stack")]
+use crate::stack::DefaultStack;
 #[cfg(windows)]
 use crate::stack::StackTebFields;
-use crate::stack::{self, DefaultStack, StackPointer};
+use crate::stack::{self, StackPointer};
 use crate::trap::CoroutineTrapHandler;
 use crate::unwind::{self, initial_func_abi, CaughtPanic, ForcedUnwindErr};
 use crate::util::{self, EncodedValue};
@@ -40,21 +42,8 @@ impl<Yield, Return> CoroutineResult<Yield, Return> {
     }
 }
 
-/// Alias for a [`ScopedCoroutine`] with a `'static` lifetime.
-///
-/// This means that the function executing in the coroutine does not borrow
-/// anything from its caller.
-pub type Coroutine<Input, Yield, Return, Stack = DefaultStack> =
-    ScopedCoroutine<'static, Input, Yield, Return, Stack>;
-
 /// A coroutine wraps a closure and allows suspending its execution more than
 /// once, returning a value each time.
-///
-/// # Lifetime
-///
-/// The `'a` lifetime here refers to the lifetime of the initial function in a
-/// coroutine and ensures that the coroutine doesn't exceed the lifetime of the
-/// initial function.
 ///
 /// # Dropping a coroutine
 ///
@@ -73,7 +62,8 @@ pub type Coroutine<Input, Yield, Return, Stack = DefaultStack> =
 /// However if all of the code executed by a coroutine is under your control and
 /// you can ensure that all types on the stack when a coroutine is suspended
 /// are `Send` then it is safe to manually implement `Send` for a coroutine.
-pub struct ScopedCoroutine<'a, Input, Yield, Return, Stack: stack::Stack> {
+#[cfg(feature = "default-stack")]
+pub struct Coroutine<Input, Yield, Return, Stack: stack::Stack = DefaultStack> {
     // Stack that the coroutine is executing on.
     stack: Stack,
 
@@ -93,14 +83,14 @@ pub struct ScopedCoroutine<'a, Input, Yield, Return, Stack: stack::Stack> {
     // never been resumed.
     drop_fn: unsafe fn(ptr: *mut u8),
 
-    // We want to be covariant over 'a, Yield and Return, and contravariant
+    // We want to be covariant over Yield and Return, and contravariant
     // over Input.
     //
     // Effectively this means that we can pass a
-    //   ScopedCoroutine<'static, &'a (), &'static (), &'static ()>
+    //   Coroutine<&'a (), &'static (), &'static ()>
     // to a function that expects a
-    //   ScopedCoroutine<'b, &'static (), &'c (), &'d ()>
-    marker: PhantomData<&'a fn(Input) -> CoroutineResult<Yield, Return>>,
+    //   Coroutine<&'static (), &'c (), &'d ()>
+    marker: PhantomData<fn(Input) -> CoroutineResult<Yield, Return>>,
 
     // Coroutine must be !Send.
     /// ```compile_fail
@@ -110,14 +100,44 @@ pub struct ScopedCoroutine<'a, Input, Yield, Return, Stack: stack::Stack> {
     marker2: PhantomData<*mut ()>,
 }
 
+/// A coroutine wraps a closure and allows suspending its execution more than
+/// once, returning a value each time.
+///
+/// # Dropping a coroutine
+///
+/// When a coroutine is dropped, its stack must be unwound so that all object on
+/// it are properly dropped. This is done by calling `force_unwind` to unwind
+/// the stack. If `force_unwind` fails then the program is aborted.
+///
+/// See the [`Coroutine::force_unwind`] function for more details.
+///
+/// # `Send`
+///
+/// In the general case, a coroutine can only be sent to another if all of the
+/// data on its stack is `Send`. There is no way to guarantee this using Rust
+/// language features so `Coroutine` does not implement the `Send` trait.
+///
+/// However if all of the code executed by a coroutine is under your control and
+/// you can ensure that all types on the stack when a coroutine is suspended
+/// are `Send` then it is safe to manually implement `Send` for a coroutine.
+#[cfg(not(feature = "default-stack"))]
+pub struct Coroutine<Input, Yield, Return, Stack: stack::Stack> {
+    stack: Stack,
+    stack_ptr: Option<StackPointer>,
+    initial_stack_ptr: StackPointer,
+    drop_fn: unsafe fn(ptr: *mut u8),
+    marker: PhantomData<fn(Input) -> CoroutineResult<Yield, Return>>,
+    marker2: PhantomData<*mut ()>,
+}
+
 // Coroutines can be Sync if the stack is Sync.
 unsafe impl<Input, Yield, Return, Stack: stack::Stack + Sync> Sync
-    for ScopedCoroutine<'_, Input, Yield, Return, Stack>
+    for Coroutine<Input, Yield, Return, Stack>
 {
 }
 
 #[cfg(feature = "default-stack")]
-impl<'a, Input, Yield, Return> ScopedCoroutine<'a, Input, Yield, Return, DefaultStack> {
+impl<Input, Yield, Return> Coroutine<Input, Yield, Return, DefaultStack> {
     /// Creates a new coroutine which will execute `func` on a new stack.
     ///
     /// This function returns a `Coroutine` which, when resumed, will execute
@@ -126,15 +146,13 @@ impl<'a, Input, Yield, Return> ScopedCoroutine<'a, Input, Yield, Return, Default
     pub fn new<F>(f: F) -> Self
     where
         F: FnOnce(&Yielder<Input, Yield>, Input) -> Return,
-        F: 'a,
+        F: 'static,
     {
         Self::with_stack(Default::default(), f)
     }
 }
 
-impl<'a, Input, Yield, Return, Stack: stack::Stack>
-    ScopedCoroutine<'a, Input, Yield, Return, Stack>
-{
+impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, Stack> {
     /// Creates a new coroutine which will execute `func` on the given stack.
     ///
     /// This function returns a coroutine which, when resumed, will execute
@@ -143,7 +161,7 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
     pub fn with_stack<F>(stack: Stack, f: F) -> Self
     where
         F: FnOnce(&Yielder<Input, Yield>, Input) -> Return,
-        F: 'a,
+        F: 'static,
     {
         // The ABI of the initial function is either "C" or "C-unwind" depending
         // on whether the "asm-unwind" feature is enabled.
@@ -435,9 +453,7 @@ impl<'a, Input, Yield, Return, Stack: stack::Stack>
     }
 }
 
-impl<'a, Input, Yield, Return, Stack: stack::Stack> Drop
-    for ScopedCoroutine<'a, Input, Yield, Return, Stack>
-{
+impl<Input, Yield, Return, Stack: stack::Stack> Drop for Coroutine<Input, Yield, Return, Stack> {
     fn drop(&mut self) {
         let guard = scopeguard::guard((), |()| {
             // We can't catch panics in #![no_std], force an abort using

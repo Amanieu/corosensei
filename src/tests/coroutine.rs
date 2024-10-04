@@ -1,12 +1,15 @@
+extern crate alloc;
 extern crate std;
 
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::cell::Cell;
 use std::rc::Rc;
 use std::string::ToString;
 use std::{println, ptr};
 
-use crate::coroutine::Coroutine;
-use crate::{CoroutineResult, ScopedCoroutine};
+use alloc::sync::Arc;
+
+use crate::{Coroutine, CoroutineResult};
 
 #[test]
 fn smoke() {
@@ -156,6 +159,7 @@ fn suspend_and_resume_values() {
 
 #[test]
 fn stateful() {
+    #[allow(dead_code)]
     #[repr(align(128))]
     #[allow(dead_code)]
     struct Aligned(u8);
@@ -175,18 +179,18 @@ fn stateful() {
 
 #[test]
 fn force_unwind() {
-    struct SetOnDrop<'a>(&'a mut bool);
-    impl<'a> Drop for SetOnDrop<'a> {
+    struct SetOnDrop(Arc<AtomicBool>);
+    impl Drop for SetOnDrop {
         fn drop(&mut self) {
-            *self.0 = true;
+            self.0.store(true, Ordering::Relaxed);
         }
     }
 
-    let mut a = false;
-    let mut b = false;
-    let a_drop = SetOnDrop(&mut a);
-    let b_drop = SetOnDrop(&mut b);
-    let mut coroutine = ScopedCoroutine::<(), (), (), _>::new(move |y, ()| {
+    let a = Arc::new(AtomicBool::new(false));
+    let b = Arc::new(AtomicBool::new(false));
+    let a_drop = SetOnDrop(a.clone());
+    let b_drop = SetOnDrop(b.clone());
+    let mut coroutine = Coroutine::<(), (), (), _>::new(move |y, ()| {
         drop(a_drop);
         y.suspend(());
         drop(b_drop);
@@ -197,16 +201,16 @@ fn force_unwind() {
     assert!(coroutine.started());
     assert!(coroutine.done());
     drop(coroutine);
-    assert!(a);
-    assert!(b);
+    assert!(a.load(Ordering::Relaxed));
+    assert!(b.load(Ordering::Relaxed));
 
     #[cfg(feature = "unwind")]
     {
-        let mut a = false;
-        let mut b = false;
-        let a_drop = SetOnDrop(&mut a);
-        let b_drop = SetOnDrop(&mut b);
-        let mut coroutine = ScopedCoroutine::<(), (), (), _>::new(move |y, ()| {
+        let a = Arc::new(AtomicBool::new(false));
+        let b = Arc::new(AtomicBool::new(false));
+        let a_drop = SetOnDrop(a.clone());
+        let b_drop = SetOnDrop(b.clone());
+        let mut coroutine = Coroutine::<(), (), (), _>::new(move |y, ()| {
             drop(a_drop);
             y.suspend(());
             drop(b_drop);
@@ -218,15 +222,15 @@ fn force_unwind() {
         assert!(coroutine.started());
         assert!(coroutine.done());
         drop(coroutine);
-        assert!(a);
-        assert!(b);
+        assert!(a.load(Ordering::Relaxed));
+        assert!(b.load(Ordering::Relaxed));
     }
 
-    let mut a = false;
-    let mut b = false;
-    let a_drop = SetOnDrop(&mut a);
-    let b_drop = SetOnDrop(&mut b);
-    let mut coroutine = ScopedCoroutine::<(), (), (), _>::new(move |y, ()| {
+    let a = Arc::new(AtomicBool::new(false));
+    let b = Arc::new(AtomicBool::new(false));
+    let a_drop = SetOnDrop(a.clone());
+    let b_drop = SetOnDrop(b.clone());
+    let mut coroutine = Coroutine::<(), (), (), _>::new(move |y, ()| {
         drop(a_drop);
         y.suspend(());
         drop(b_drop);
@@ -239,8 +243,8 @@ fn force_unwind() {
     assert!(coroutine.started());
     assert!(coroutine.done());
     drop(coroutine);
-    assert!(a);
-    assert!(b);
+    assert!(a.load(Ordering::Relaxed));
+    assert!(b.load(Ordering::Relaxed));
 }
 
 // The Windows stack starts out small with only one page comitted. Check that it
