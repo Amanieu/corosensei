@@ -345,7 +345,7 @@ pub unsafe fn switch_and_link(
         // Push a return address onto our stack and then jump to the return
         // address at the top of the coroutine stack.
         //
-        // From here on execution continues in stack_init_trampoline or the 0:
+        // From here on execution continues in stack_init_trampoline or the 2:
         // label in switch_yield.
         "call [rdx]",
 
@@ -423,7 +423,7 @@ pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) ->
 
         // Push a return address on the stack. This is the address that will be
         // called by switch_and_link() the next time this context is resumed.
-        "lea rax, [rip + 0f]",
+        "lea rax, [rip + 2f]",
         "push rax",
 
         // Save our stack pointer to RSI, which is then returned out of
@@ -458,7 +458,7 @@ pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) ->
         // - RDX points to the top of our stack, including the return address.
         // - RSI points to the base of our stack.
         // - RDI contains the argument passed from switch_and_link.
-        "0:",
+        "2:",
 
         // Save the RBP of the parent context to the parent stack. When combined
         // with the return address this forms a valid frame record (RBP & RIP)
@@ -554,7 +554,7 @@ pub unsafe fn switch_and_throw(
         "push rbx",
 
         // Push a return address to the stack.
-        "lea rax, [rip + 0f]",
+        "lea rax, [rip + 2f]",
         "push rax",
 
         // Save RBP of the parent context.
@@ -589,7 +589,7 @@ pub unsafe fn switch_and_throw(
 
         // Upon returning, our register state is just like a normal return into
         // switch_and_link().
-        "0:",
+        "2:",
 
         // Restore registers just like the second half of switch_and_link.
         "pop rbx",

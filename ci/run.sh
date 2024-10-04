@@ -32,7 +32,8 @@ export RUST_TEST_THREADS=1
 "${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --release
 
 # asm-unwind
-if [ "${CHANNEL}" = "nightly" ]; then
-    "${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --features asm-unwind
-    "${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --features asm-unwind --release
-fi
+# Currently disabled because of LLVM issues.
+#if [ "${CHANNEL}" = "nightly" ]; then
+#    "${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --features asm-unwind
+#    "${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --features asm-unwind --release
+#fi

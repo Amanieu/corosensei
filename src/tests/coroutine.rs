@@ -95,7 +95,7 @@ fn panics_propagated() {
     let a = Rc::new(Cell::new(false));
     let b = SetOnDrop(a.clone());
     let mut coroutine = Coroutine::<(), (), ()>::new(move |_, ()| {
-        drop(&b);
+        drop(b);
         panic!("foobar");
     });
     let result = panic::catch_unwind(AssertUnwindSafe(|| coroutine.resume(())));
@@ -121,7 +121,7 @@ fn panics_propagated_via_parent() {
     let a = Rc::new(Cell::new(false));
     let b = SetOnDrop(a.clone());
     let mut coroutine = Coroutine::<(), (), ()>::new(move |y, ()| {
-        drop(&b);
+        drop(b);
         y.on_parent_stack(|| {
             panic!("foobar");
         });
@@ -157,6 +157,7 @@ fn suspend_and_resume_values() {
 #[test]
 fn stateful() {
     #[repr(align(128))]
+    #[allow(dead_code)]
     struct Aligned(u8);
     let state = [41, 42, 43, 44, 45];
     let aligned = Aligned(100);
@@ -641,10 +642,12 @@ mod trap_handler {
                     (*(*exception_info).ContextRecord).Rdi = rdi;
                     (*(*exception_info).ContextRecord).Rsi = rsi;
                 } else if #[cfg(target_arch = "x86")] {
-                    let TrapHandlerRegs { eip, esp, ebp, ecx, edx } = regs;
+                    let TrapHandlerRegs { eip, esp, ebp,eax, ebx, ecx, edx } = regs;
                     (*(*exception_info).ContextRecord).Eip = eip;
                     (*(*exception_info).ContextRecord).Esp = esp;
                     (*(*exception_info).ContextRecord).Ebp = ebp;
+                    (*(*exception_info).ContextRecord).Eax = eax;
+                    (*(*exception_info).ContextRecord).Ebx = ebx;
                     (*(*exception_info).ContextRecord).Ecx = ecx;
                     (*(*exception_info).ContextRecord).Edx = edx;
                 } else {
