@@ -80,12 +80,6 @@ impl<Return> CoroutineTrapHandler<Return> {
                 f: *mut F,
                 parent_link: *mut StackPointer
             ) -> ! {
-                // After returning from the exception handler we may have an
-                // invalid SEH exception chain. We need to reset it to the
-                // exception record at the root of the stack.
-                #[cfg(all(windows, target_arch = "x86"))]
-                arch::reset_seh_handler(parent_link);
-
                 // This must be called after a stack overflow exception, but it
                 // doesn't hurt to call it for other exception types as well.
                 #[cfg(windows)]

@@ -642,10 +642,12 @@ mod trap_handler {
                     (*(*exception_info).ContextRecord).Rdi = rdi;
                     (*(*exception_info).ContextRecord).Rsi = rsi;
                 } else if #[cfg(target_arch = "x86")] {
-                    let TrapHandlerRegs { eip, esp, ebp, ecx, edx } = regs;
+                    let TrapHandlerRegs { eip, esp, ebp,eax, ebx, ecx, edx } = regs;
                     (*(*exception_info).ContextRecord).Eip = eip;
                     (*(*exception_info).ContextRecord).Esp = esp;
                     (*(*exception_info).ContextRecord).Ebp = ebp;
+                    (*(*exception_info).ContextRecord).Eax = eax;
+                    (*(*exception_info).ContextRecord).Ebx = ebx;
                     (*(*exception_info).ContextRecord).Ecx = ecx;
                     (*(*exception_info).ContextRecord).Edx = edx;
                 } else {
