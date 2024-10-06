@@ -147,6 +147,9 @@ impl<Input, Yield, Return> Coroutine<Input, Yield, Return, DefaultStack> {
     where
         F: FnOnce(&Yielder<Input, Yield>, Input) -> Return,
         F: 'static,
+        Input: 'static,
+        Yield: 'static,
+        Return: 'static,
     {
         Self::with_stack(Default::default(), f)
     }
@@ -162,6 +165,9 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
     where
         F: FnOnce(&Yielder<Input, Yield>, Input) -> Return,
         F: 'static,
+        Input: 'static,
+        Yield: 'static,
+        Return: 'static,
     {
         // The ABI of the initial function is either "C" or "C-unwind" depending
         // on whether the "asm-unwind" feature is enabled.
