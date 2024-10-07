@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2024-10-07
+
+- `ScopedCoroutine` has been removed since it turned out to be unsound. (#28, #36)
+- Fixed SEH exception chain not getting correctly reset on x86 Windows when using trap handling. (#33)
+- Fixed various warnings and errors from lints. (#33)
+- Updated `windows-sys` dependency.
+
 ## [0.1.4] - 2023-08-23
 
 - Added support for LoongArch. (#17)
@@ -32,7 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
-[unreleased]: https://github.com/Amanieu/corosensei/compare/v0.1.4...HEAD
+[unreleased]: https://github.com/Amanieu/corosensei/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Amanieu/corosensei/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/Amanieu/corosensei/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Amanieu/corosensei/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Amanieu/corosensei/compare/v0.1.1...v0.1.2
