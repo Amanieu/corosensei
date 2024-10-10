@@ -276,6 +276,10 @@ global_asm!(
     asm_function_end!("stack_call_trampoline"),
 );
 
+// The function `rust_fiber_switch` upon its call saves `ret: rdx` output pointer argument and
+// callee-saved registers (defined by to the AMD64 System-V ABI) to the stack.  So it switches
+// stacks, restores callee-saved registers and an output pointer argument, then finally it jumps
+// to the input function pointer in rcx.
 global_asm!(
     ".balign 16",
     asm_function_begin!("rust_fiber_switch"),

@@ -75,6 +75,9 @@ impl<Arg> Fiber<Arg> {
         };
         // Never return from this as this is the "main" function of any `Fiber`
         exec.switch(|execution| {
+            // Double panic is good enough to prevent UB from happening.  It would either abort
+            // in case unwinding is enabled, halt, or stuck in a loop forever, which is fine
+            // because `Fiber`s are `!Send`.
             let _guard = scopeguard::guard((), |()| {
                 panic!("execution panicked, aborting...");
             });
