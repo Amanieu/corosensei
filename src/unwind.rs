@@ -151,11 +151,6 @@ cfg_if::cfg_if! {
             // the 32-byte shadow space and can use the same registers as
             // the generic x86_64 implementation.
             if #[cfg(target_arch = "x86_64")] {
-                pub type SwitchFiberFunc = unsafe extern "sysv64" fn(
-                    sp: StackPointer,
-                    arg: EncodedValue,
-                    obj: *mut ffi::c_void,
-                );
                 pub type InitialFunc<T> = unsafe extern "sysv64" fn(
                     arg: EncodedValue,
                     sp: &mut StackPointer,
@@ -165,11 +160,6 @@ cfg_if::cfg_if! {
                     unsafe extern "sysv64" fn(val: *mut T, parent_link: *mut StackPointer) -> !;
                 pub type StackCallFunc = unsafe extern "sysv64" fn(ptr: *mut u8);
                 macro_rules! initial_func_abi {
-                    (unsafe fn $($tt:tt)*) => {
-                        unsafe extern "sysv64" fn $($tt)*
-                    }
-                }
-                macro_rules! fiber_switch_func_abi {
                     (unsafe fn $($tt:tt)*) => {
                         unsafe extern "sysv64" fn $($tt)*
                     }
@@ -347,6 +337,37 @@ cfg_if::cfg_if! {
             match val {
                 Ok(val) => val,
                 Err(_) => unreachable!(),
+            }
+        }
+    }
+}
+
+cfg_if::cfg_if! {
+    // Force the use of the SysV64 ABI on Windows, it makes the
+    // assembly code much simpler since we don't need to worry about
+    // the 32-byte shadow space and can use the same registers as
+    // the generic x86_64 implementation.
+    if #[cfg(target_arch = "x86_64")] {
+        pub type SwitchFiberFunc = unsafe extern "sysv64" fn(
+            sp: StackPointer,
+            arg: EncodedValue,
+            obj: *mut ffi::c_void,
+        );
+        macro_rules! fiber_switch_func_abi {
+            (unsafe fn $($tt:tt)*) => {
+                unsafe extern "sysv64" fn $($tt)*
+            }
+        }
+    } else {
+        // TODO: Consider fastcall on x86
+        pub type SwitchFiberFunc = unsafe extern "C" fn(
+            sp: StackPointer,
+            arg: EncodedValue,
+            obj: *mut ffi::c_void,
+        );
+        macro_rules! fiber_switch_func_abi {
+            (unsafe fn $($tt:tt)*) => {
+                unsafe extern "C" fn $($tt)*
             }
         }
     }
