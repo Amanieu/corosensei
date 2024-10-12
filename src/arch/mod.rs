@@ -87,7 +87,6 @@ cfg_if::cfg_if! {
             ($name:literal) => {
                 concat!(
                     ".globl ", asm_mangle!($name), "\n",
-                    ".hidden ", asm_mangle!($name), "\n",
                     ".type ", asm_mangle!($name), ", ", asm_function_type!(), "\n",
                     asm_mangle!($name), ":\n",
                 )
