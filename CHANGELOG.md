@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2024-10-12
+
+- Avoid using `.hidden` for functions declared in `global_asm!` since that may
+  cause linker errors.
+
 ## [0.2.0] - 2024-10-07
 
 - `ScopedCoroutine` has been removed since it turned out to be unsound. (#28, #36)
@@ -39,7 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
-[unreleased]: https://github.com/Amanieu/corosensei/compare/v0.2.0...HEAD
+[unreleased]: https://github.com/Amanieu/corosensei/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/Amanieu/corosensei/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Amanieu/corosensei/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/Amanieu/corosensei/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Amanieu/corosensei/compare/v0.1.2...v0.1.3
