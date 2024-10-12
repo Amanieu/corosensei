@@ -195,6 +195,7 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
                 let input : Result<Input, ForcedUnwindErr> = util::decode_val(input);
                 let input = match input {
                     Ok(input) => input,
+                    #[cfg_attr(feature = "asm-unwind", allow(unreachable_patterns))]
                     Err(_) => unreachable_unchecked(),
                 };
 
@@ -368,6 +369,7 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
                 let result = unsafe { self.resume_with_exception(stack_ptr, forced_unwind) };
                 match result {
                     CoroutineResult::Yield(_) | CoroutineResult::Return(Ok(_)) => Ok(()),
+                    #[cfg_attr(feature = "asm-unwind", allow(unreachable_patterns))]
                     CoroutineResult::Return(Err(e)) => Err(e),
                 }
             });

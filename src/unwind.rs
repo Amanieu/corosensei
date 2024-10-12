@@ -216,7 +216,8 @@ cfg_if::cfg_if! {
         pub fn maybe_resume_unwind<T>(val: Result<T, CaughtPanic>) -> T {
             match val {
                 Ok(val) => val,
-                Err(_) => unreachable!(),
+                    #[allow(unreachable_patterns)]
+                    Err(_) => unreachable!(),
             }
         }
     } else if #[cfg(feature = "unwind")] {
@@ -310,6 +311,7 @@ cfg_if::cfg_if! {
         pub fn maybe_force_unwind<T>(val: Result<T, ForcedUnwindErr>) -> T {
             match val {
                 Ok(val) => val,
+                #[allow(unreachable_patterns)]
                 Err(_) => unreachable!(),
             }
         }
