@@ -187,7 +187,7 @@ global_asm!(
 // with inline assembly.
 extern "C" {
     fn stack_init_trampoline(arg: EncodedValue, stack_base: StackPointer, stack_ptr: StackPointer);
-    fn stack_init_trampoline_return();
+    static stack_init_trampoline_return: [u8; 0];
     #[allow(dead_code)]
     fn stack_call_trampoline(arg: *mut u8, sp: StackPointer, f: StackCallFunc);
 }
@@ -532,7 +532,7 @@ pub unsafe fn setup_trap_trampoline<T>(
         a0: val_ptr as u64,
         a1: parent_link as u64,
         fp: stack_base.get() as u64,
-        ra: stack_init_trampoline_return as u64,
+        ra: stack_init_trampoline_return.as_ptr() as u64,
     }
 }
 

@@ -310,7 +310,7 @@ global_asm!(
 // with inline assembly.
 extern "C" {
     fn stack_init_trampoline(arg: EncodedValue, stack_base: StackPointer, stack_ptr: StackPointer);
-    fn stack_init_trampoline_return();
+    static stack_init_trampoline_return: [u8; 0];
     #[allow(dead_code)]
     fn stack_call_trampoline(arg: *mut u8, sp: StackPointer, f: StackCallFunc);
     fn trap_handler_trampoline();
@@ -382,7 +382,10 @@ pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) ->
     // This is only needed on x86 Windows because this is the only platform
     // where the stack walker will alternate between looking at the frame
     // pointer chain and looking up FPO unwinding information in a PDB.
-    push(&mut sp, Some(stack_init_trampoline_return as StackWord));
+    push(
+        &mut sp,
+        Some(stack_init_trampoline_return.as_ptr() as StackWord),
+    );
 
     // Placeholder for parent link.
     push(&mut sp, None);
@@ -800,7 +803,10 @@ pub unsafe fn setup_trap_trampoline<T>(
     let val_ptr = sp;
 
     // Set up a return address which returns to stack_init_trampoline.
-    push(&mut sp, Some(stack_init_trampoline_return as StackWord));
+    push(
+        &mut sp,
+        Some(stack_init_trampoline_return.as_ptr() as StackWord),
+    );
 
     // Since we reset the stack offset back to the base of the coroutine stack,
     // we also need to reset the SEH ExceptionList chain in the TIB to just the
