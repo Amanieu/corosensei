@@ -276,45 +276,6 @@ global_asm!(
     asm_function_end!("stack_call_trampoline"),
 );
 
-// The function `rust_fiber_switch` upon its call saves `ret: rdx` output pointer argument and
-// callee-saved registers (defined by to the AMD64 System-V ABI) to the stack.  So it switches
-// stacks, restores callee-saved registers and an output pointer argument, then finally it jumps
-// to the input function pointer in rcx.
-global_asm!(
-    ".balign 16",
-    asm_function_begin!("rust_fiber_switch"),
-    "push rdx",
-    "push r12",
-    "push r13",
-    "push r14",
-    "push r15",
-    "push rbx",
-    "push rbp",
-    "mov rax, rsp",
-    "mov rsp, rdi",
-    "mov rdi, rax",
-    "pop rbp",
-    "pop rbx",
-    "pop r15",
-    "pop r14",
-    "pop r13",
-    "pop r12",
-    "pop rdx",
-    "jmp rcx",
-    asm_function_end!("rust_fiber_switch"),
-);
-
-// Functions are defined in `global_asm` macro invocations to have an access to the return address.
-extern "sysv64" {
-    #[link_name = "rust_fiber_switch"]
-    pub fn fiber_switch(
-        stack_ptr: StackPointer,
-        arg: EncodedValue,
-        ret: *mut ffi::c_void,
-        f: SwitchFiberFunc,
-    );
-}
-
 // These trampolines use a custom calling convention and should only be called
 // with inline assembly.
 extern "C" {
@@ -326,25 +287,57 @@ extern "C" {
 
 #[inline]
 pub unsafe fn fiber_init_stack(stack: &impl Stack) -> StackPointer {
+    unsafe extern "sysv64" fn entry(
+        sp: StackPointer,
+        arg: EncodedValue,
+        // There could be no output buffer on a fresh fiber.
+        // Assuming first `f` function never returns on this fiber.
+        _obj: *mut ffi::c_void,
+        f: SwitchFiberFunc,
+    ) {
+        f(sp, arg, ptr::null_mut())
+    }
+
     let mut sp = stack.base().get();
-    let bp = sp as StackWord;
 
     // Zero initialize return pointer
     push(&mut sp, Some(0));
-    // Out pointer rdx (never written to)
-    push(
-        &mut sp,
-        Some(ptr::NonNull::<Infallible>::dangling().as_ptr() as StackWord),
-    );
-    // Zero initialize five registers: rbx, r15, r14, r13, r12.
-    // rbx is reserved by LLVM, but we produce "sysv64" ABI functions for which LLVM cannot infer
-    // external meaning of rbx.
-    for _ in 0..5 {
-        push(&mut sp, Some(0));
-    }
-    // Save stack pointer as rbp
-    push(&mut sp, Some(bp));
+    // Put the entry function pointer
+    push(&mut sp, Some(entry as StackWord));
+
     StackPointer::new_unchecked(sp)
+}
+
+#[inline]
+pub unsafe fn fiber_switch(
+    stack_ptr: StackPointer,
+    arg: EncodedValue,
+    ret: *mut ffi::c_void,
+    f: SwitchFiberFunc,
+) {
+    // The function `fiber_switch` upon its call saves `ret: rdx` output pointer argument and
+    // callee-saved registers (defined by to the AMD64 System-V ABI) to the stack.  So it switches
+    // stacks, restores callee-saved registers and an output pointer argument, then finally it jumps
+    // to the input function pointer in rcx.
+    asm!(
+        "lea rax, [rip + 2f]",
+        "push rdx",
+        "push rbx",
+        "push rbp",
+        "push rax",
+        "mov rax, rsp",
+        "mov rsp, rdi",
+        "mov rdi, rax",
+        "ret",
+        "2:",
+        "pop rbp",
+        "pop rbx",
+        "pop rdx",
+        "call rcx",
+        inout("rdi") stack_ptr.get() => _, inout("rsi") arg => _, inout("rcx") f => _, inout("rdx") ret => _,
+        lateout("r12") _, lateout("r13") _, lateout("r14") _, lateout("r15") _,
+        clobber_abi("sysv64"),
+    );
 }
 
 /// Sets up the initial state on a stack so that the given function is
