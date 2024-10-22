@@ -72,6 +72,10 @@ targets = [
 name = "coroutine"
 harness = false
 
+[[bench]]
+name = "fiber"
+harness = false
+
 # We want debug symbols on release binaries by default. We can always strip them
 # out later if necessary.
 [profile.release]
