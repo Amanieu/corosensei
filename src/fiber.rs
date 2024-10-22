@@ -1,4 +1,4 @@
-use core::{convert::Infallible, ffi, marker::PhantomData, mem};
+use core::{convert::Infallible, ffi, marker::PhantomData, mem, ptr};
 
 use crate::{
     arch,
@@ -145,5 +145,42 @@ impl<Arg> Fiber<Arg> {
             );
             output.assume_init()
         }
+    }
+
+    /// In-place context switch
+    ///
+    /// See [`Fiber::switch`] for more information.
+    ///
+    /// Exploits exclusivity of mutable reference to context switch to a pointed-to fiber.
+    /// Such detail basically disallows a fiber to be simply destroyed,
+    /// as such [`Fiber::switch`] could be a better alternative in most cases.
+    ///
+    /// # Unwind
+    ///
+    /// In case a call of the `convert` closure unwinds, abort is triggered.
+    pub fn switch_in_place<YieldBack, Output, F, G>(
+        &mut self,
+        intermediate: F,
+        convert: G,
+    ) -> Output
+    where
+        F: FnOnce(Fiber<YieldBack>) -> Arg + 'static,
+        G: FnOnce(YieldBack) -> (Fiber<Arg>, Output),
+        Arg: 'static,
+    {
+        let this = ptr::addr_of_mut!(*self);
+        // We ensure the `self` fiber won't be invalid outside of this method,
+        // even in case the `convert` closure unwinds.
+        let guard = scopeguard::guard((), |()| {
+            panic!("convert closure panicked, aborting...");
+        });
+        let fiber = unsafe { ptr::read(this) };
+
+        let yield_ = fiber.switch(intermediate);
+        let (fiber, output) = convert(yield_);
+
+        unsafe { ptr::write(this, fiber) };
+        mem::forget(guard);
+        output
     }
 }
