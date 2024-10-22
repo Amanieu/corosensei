@@ -99,7 +99,6 @@
 //! ```
 
 use core::arch::{asm, global_asm};
-use core::convert::Infallible;
 use core::{ffi, ptr};
 
 use super::{allocate_obj_on_stack, push};
@@ -311,17 +310,17 @@ pub unsafe fn fiber_init_stack(stack: &impl Stack) -> StackPointer {
 #[inline]
 pub unsafe fn fiber_switch(
     stack_ptr: StackPointer,
-    arg: EncodedValue,
+    mut arg: EncodedValue,
     ret: *mut ffi::c_void,
-    f: SwitchFiberFunc,
+    mut f: SwitchFiberFunc,
 ) {
+    let mut sp = stack_ptr.get();
     // The function `fiber_switch` upon its call saves `ret: rdx` output pointer argument and
     // callee-saved registers (defined by to the AMD64 System-V ABI) to the stack.  So it switches
     // stacks, restores callee-saved registers and an output pointer argument, then finally it jumps
     // to the input function pointer in rcx.
     asm!(
         "lea rax, [rip + 2f]",
-        "push rdx",
         "push rbx",
         "push rbp",
         "push rax",
@@ -332,12 +331,11 @@ pub unsafe fn fiber_switch(
         "2:",
         "pop rbp",
         "pop rbx",
-        "pop rdx",
-        "call rcx",
-        inout("rdi") stack_ptr.get() => _, inout("rsi") arg => _, inout("rcx") f => _, inout("rdx") ret => _,
+        inout("rdi") sp, inout("rsi") arg, inout("rcx") f,
         lateout("r12") _, lateout("r13") _, lateout("r14") _, lateout("r15") _,
         clobber_abi("sysv64"),
     );
+    f(StackPointer::new_unchecked(sp), arg, ret)
 }
 
 /// Sets up the initial state on a stack so that the given function is
