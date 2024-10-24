@@ -315,6 +315,7 @@ pub unsafe fn fiber_switch(
     mut f: SwitchFiberFunc,
 ) {
     let mut sp = stack_ptr.get();
+    // TODO: edit the comment below
     // The function `fiber_switch` upon its call saves `ret: rdx` output pointer argument and
     // callee-saved registers (defined by to the AMD64 System-V ABI) to the stack.  So it switches
     // stacks, restores callee-saved registers and an output pointer argument, then finally it jumps
