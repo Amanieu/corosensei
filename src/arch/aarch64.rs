@@ -207,7 +207,7 @@ pub unsafe fn fiber_init_stack(stack: &impl Stack) -> StackPointer {
     StackPointer::new_unchecked(sp)
 }
 
-#[inline(never)]
+#[inline]
 pub unsafe fn fiber_switch(
     stack_ptr: StackPointer,
     mut arg: EncodedValue,
@@ -216,20 +216,17 @@ pub unsafe fn fiber_switch(
 ) {
     let mut sp = stack_ptr.get();
     asm!(
-        "str x19, [sp, #-8]!",
-        "str x29, [sp, #-8]!",
+        "stp x19, x29, [sp, #-16]!",
         "adr lr, 2f",
         "str lr, [sp, #-8]!",
-
-        "mov x3, sp",
+        "ldr lr, [x0], #8",
+        "mov x9, sp",
         "mov sp, x0",
-        "mov x0, x3",
-        "ldr lr, [sp], #8",
+        "mov x0, x9",
         "ret",
         "2:",
-        "ldr x19, [sp], #8",
-        "ldr x29, [sp], #8",
-        inlateout("x0") sp, inlateout("x1") arg, inlateout("x2") f,
+        "ldp x19, x29, [sp], #16",
+        inlateout("x0") sp, inlateout("x1") arg, inlateout("x3") f,
         lateout("x20") _, lateout("x21") _, lateout("x22") _, lateout("x23") _,
         lateout("x24") _, lateout("x25") _, lateout("x26") _, lateout("x27") _,
         lateout("x28") _,
