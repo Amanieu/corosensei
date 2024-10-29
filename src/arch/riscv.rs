@@ -71,12 +71,13 @@
 //! ```
 
 use core::arch::{asm, global_asm};
+use core::{ffi, ptr};
 
 use super::{allocate_obj_on_stack, push};
 use crate::stack::{Stack, StackPointer};
 use crate::unwind::{
     asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size_root, cfi_reset_args_size_yield,
-    InitialFunc, StackCallFunc, TrapHandler,
+    InitialFunc, StackCallFunc, SwitchFiberFunc, TrapHandler,
 };
 use crate::util::EncodedValue;
 
@@ -253,6 +254,64 @@ extern "C" {
     static stack_init_trampoline_return: [u8; 0];
     #[allow(dead_code)]
     fn stack_call_trampoline(arg: *mut u8, sp: StackPointer, f: StackCallFunc);
+}
+
+#[inline]
+pub unsafe fn fiber_init_stack(stack: &impl Stack) -> StackPointer {
+    unsafe extern "C" fn entry(
+        sp: StackPointer,
+        arg: EncodedValue,
+        // There could be no output buffer on a fresh fiber.
+        // Assuming first `f` function never returns on this fiber.
+        _obj: *mut ffi::c_void,
+        f: SwitchFiberFunc,
+    ) {
+        f(sp, arg, ptr::null_mut())
+    }
+
+    let mut sp = stack.base().get();
+
+    // Put the entry function pointer
+    push(&mut sp, Some(entry as StackWord));
+
+    StackPointer::new_unchecked(sp)
+}
+
+#[inline]
+pub unsafe fn fiber_switch(
+    stack_ptr: StackPointer,
+    mut arg: EncodedValue,
+    ret: *mut ffi::c_void,
+    mut f: SwitchFiberFunc,
+) {
+    let mut sp = stack_ptr.get();
+    asm!(
+        addi!("sp", "sp", -3),
+        s!("s0", 2, "sp"),
+        s!("s1", 1, "sp"),
+        "lla ra, 2f",
+        s!("ra", 0, "sp"),
+        l!("ra", 0, "a0"),
+        "mv t1, sp",
+        addi!("sp", "a0", 1),
+        "mv a0, t1",
+        "ret",
+        "2:",
+        l!("s1", 1, "sp"),
+        l!("s0", 2, "sp"),
+        addi!("sp", "sp", 2),
+
+        inlateout("a0") sp, inlateout("a1") arg, inlateout("a3") f,
+        lateout("s2") _, lateout("s3") _, lateout("s4") _, lateout("s5") _,
+        lateout("s6") _, lateout("s7") _, lateout("s8") _, lateout("s9") _,
+        lateout("s10") _, lateout("s11") _,
+        lateout("fs0") _, lateout("fs1") _, lateout("fs2") _, lateout("fs3") _,
+        lateout("fs4") _, lateout("fs5") _, lateout("fs6") _, lateout("fs7") _,
+        lateout("fs8") _, lateout("fs9") _, lateout("fs10") _, lateout("fs11") _,
+        lateout("x28") _,
+        clobber_abi("C"),
+    );
+    f(StackPointer::new_unchecked(sp), arg, ret)
 }
 
 #[inline]
