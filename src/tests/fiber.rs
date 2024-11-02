@@ -49,28 +49,28 @@ fn backtrace_traces_to_host() {
     fn look_for_me() {
         run_test();
     }
-    fn assert_contains_host() {
+    fn contains_host() -> bool {
         let trace = backtrace::Backtrace::new();
         println!("{:?}", trace);
-        assert!(trace
+        trace
             .frames()
             .iter()
             .flat_map(|f| f.symbols())
             .filter_map(|s| Some(s.name()?.to_string()))
-            .any(|s| s.contains("look_for_me")));
+            .any(|s| s.contains("look_for_me"))
     }
 
     fn run_test() {
-        assert_contains_host();
+        assert!(contains_host());
         let fiber = Fiber::new(move |parent: Fiber<Fiber<Fiber<Fiber<Fiber<()>>>>>| {
-            assert_contains_host();
+            assert!(!contains_host());
             let parent = parent.switch(identity);
             let parent = parent.switch(|f| {
-                assert_contains_host();
+                assert!(contains_host());
                 f.switch(identity)
             });
             let parent = parent.switch(identity);
-            assert_contains_host();
+            assert!(!contains_host());
             (parent, drop)
         });
         let fiber = fiber.switch(identity);
