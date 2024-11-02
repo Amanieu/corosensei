@@ -7,18 +7,28 @@ use std::rc::Rc;
 use std::string::ToString;
 use std::{println, ptr};
 
-use crate::Fiber;
+use crate::{fiber, Fiber};
+
+macro_rules! RecursiveFiber {
+    () => {
+        ()
+    };
+    (+ $($rest:tt)*) => {
+        Fiber<RecursiveFiber!($($rest)*)>
+    };
+}
 
 #[test]
 fn smoke() {
     let hit = Rc::new(Cell::new(false));
     let hit2 = hit.clone();
-    let fiber = Fiber::new(move |parent| {
+    let fiber = fiber().switch(move |fiber| {
+        let parent = fiber.switch(identity);
         hit2.set(true);
-        (parent, drop)
+        (parent, ())
     });
     assert!(!hit.get());
-    fiber.switch(identity);
+    () = fiber.switch(identity);
     assert!(hit.get());
 }
 
@@ -26,18 +36,19 @@ fn smoke() {
 fn suspend_and_resume() {
     let hit = Rc::new(Cell::new(false));
     let hit2 = hit.clone();
-    let fiber = Fiber::new(move |parent: Fiber<Fiber<Fiber<Fiber<Fiber<()>>>>>| {
+    let fiber = fiber().switch(move |parent: RecursiveFiber![+++++ ++]| {
+        let parent = parent.switch(identity);
         let parent = parent.switch(identity);
         hit2.set(true);
         let parent = parent.switch(identity);
-        (parent, drop)
+        (parent, ())
     });
     assert!(!hit.get());
     let fiber = fiber.switch(identity);
     assert!(!hit.get());
     let fiber = fiber.switch(identity);
     assert!(hit.get());
-    fiber.switch(identity);
+    () = fiber.switch(identity);
     assert!(hit.get());
 }
 
@@ -62,7 +73,8 @@ fn backtrace_traces_to_host() {
 
     fn run_test() {
         assert!(contains_host());
-        let fiber = Fiber::new(move |parent: Fiber<Fiber<Fiber<Fiber<Fiber<()>>>>>| {
+        let fiber = fiber().switch(move |parent: RecursiveFiber![+++++ ++]| {
+            let parent = parent.switch(identity);
             assert!(!contains_host());
             let parent = parent.switch(identity);
             let parent = parent.switch(|f| {
@@ -71,11 +83,11 @@ fn backtrace_traces_to_host() {
             });
             let parent = parent.switch(identity);
             assert!(!contains_host());
-            (parent, drop)
+            (parent, ())
         });
         let fiber = fiber.switch(identity);
         let fiber = fiber.switch(identity);
-        fiber.switch(identity);
+        () = fiber.switch(identity);
     }
 
     look_for_me();
@@ -83,11 +95,12 @@ fn backtrace_traces_to_host() {
 
 #[test]
 fn suspend_and_resume_values() {
-    let fiber = Fiber::new(move |(parent, first): (Fiber<_>, _)| {
+    let fiber = fiber().switch(move |fiber| {
+        let (parent, first): (Fiber<_>, _) = fiber.switch(identity);
         assert_eq!(first, 2.0);
         let (parent, second) = parent.switch(|f| (f, 4));
         assert_eq!(second, 3.0);
-        (parent, |_| "hello".to_string())
+        (parent, "hello".to_string())
     });
     let (fiber, second) = fiber.switch(|f| (f, 2.0));
     assert_eq!(second, 4);
@@ -108,12 +121,13 @@ fn stateful() {
     struct Aligned(u8);
     let state = [41, 42, 43, 44, 45];
     let aligned = Aligned(100);
-    let mut fiber = Fiber::new(move |mut parent: Fiber<Yield>| {
+    let mut fiber = fiber().switch(move |fiber| {
+        let mut parent: Fiber<Yield> = fiber.switch(identity);
         assert_eq!(&aligned as *const _ as usize % 128, 0);
         for i in state {
             parent = parent.switch(move |f| Yield::Continue(f, i));
         }
-        (parent, |_| Yield::Stop)
+        (parent, Yield::Stop)
     });
     for i in state {
         match fiber.switch(identity) {
@@ -131,7 +145,9 @@ fn stateful() {
 // gets properly grown by the kernel as needed.
 #[test]
 fn stack_growth() {
-    let fiber = Fiber::new(|parent| {
+    let fiber = fiber().switch(|fiber| {
+        let parent = fiber.switch(identity);
+
         fn recurse(i: u32, p: &mut [u8; 10000]) {
             unsafe {
                 // Ensure the stack allocation isn't optimized away.
@@ -144,7 +160,7 @@ fn stack_growth() {
 
         // Use ~500KB of stack.
         recurse(50, &mut [0; 10000]);
-        (parent, drop)
+        (parent, ())
     });
     fiber.switch(identity);
 }

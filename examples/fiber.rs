@@ -1,6 +1,8 @@
 // This example is basically a reworked `example/basic.rs`
 
-use corosensei::Fiber;
+use std::convert::identity;
+
+use corosensei::{fiber, Fiber};
 
 struct Arg {
     exec: Fiber<Option<Yield>>,
@@ -21,7 +23,10 @@ impl Arg {
 fn main() {
     println!("[main] creating fiber");
 
-    let mut exec = Fiber::new(|Arg { mut exec, i }| {
+    let exec = fiber();
+
+    let mut exec = exec.switch(|exec| {
+        let Arg { mut exec, i } = exec.switch(identity);
         println!("[fiber] fiber started with input {}", i);
         for mut i in 0..5 {
             println!("[fiber] yielding {}", i);
@@ -29,7 +34,7 @@ fn main() {
             println!("[fiber] got {} from parent", i)
         }
         println!("[fiber] exiting fiber");
-        (exec, |_| None)
+        (exec, None)
     });
 
     let mut counter = 100;

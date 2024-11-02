@@ -31,65 +31,70 @@ pub struct Fiber<Yield> {
     _unwind_unsafe: PhantomData<&'static mut ()>,
 }
 
+// TODO: update docs
+/// Create a new `Fiber`.
+///
+/// Create a fiber by using a default-initialized [`DefaultStack`] instance.
+///
+/// For more details see [`Fiber::with_stack`].
+pub fn fiber<Return>() -> Fiber<(Fiber<Return>, Return)>
+where
+    Return: 'static,
+{
+    fiber_with_stack(
+        |arg, stack| {
+            drop(stack);
+            arg
+        },
+        DefaultStack::default(),
+    )
+}
+
+// TODO: update docs
+/// Create a new `Fiber` with some specified `stack`
+///
+/// Initializes the stack to be ready for the initial switch, but doesn't call the `f` closure argument yet.
+/// Closure `f` is expected to return a pair of two objects: an `Fiber` to switch to after `f` returns, and a closure of type `Q` that is run on that `Fiber`'s stack.
+/// The `Q` closure converts previously used stack into some payload of type `Return`.
+/// It has similar purpose as the input closure of [`Fiber::switch`], see its documentation for more details.
+///
+/// # Unwinding
+///
+/// If call to `f` ever panics or unwinds then the entire process is aborted.
+pub fn fiber_with_stack<Arg, Return, F, Stack>(
+    after_exit: F,
+    stack: Stack,
+) -> Fiber<(Fiber<Return>, Arg)>
+where
+    F: FnOnce(Arg, Stack) -> Return + 'static,
+    Arg: 'static,
+    Return: 'static,
+    Stack: stack::Stack + 'static,
+{
+    let sp = unsafe { arch::fiber_init_stack(&stack) };
+    let exec = Fiber::<Infallible> {
+        sp,
+        _arg: PhantomData,
+        _thread_unsafe: PhantomData,
+        _unwind_unsafe: PhantomData,
+    };
+    // Never return from this as this is the "main" function of any `Fiber`
+    exec.switch(|execution| {
+        // Double panic is good enough to prevent UB from happening.  It would either abort
+        // in case unwinding is enabled, halt, or stuck in a loop forever, which is fine
+        // because `Fiber`s are `!Send`.
+        let _guard = scopeguard::guard((), |()| {
+            panic!("execution panicked, aborting...");
+        });
+
+        let (execution, arg): (Fiber<_>, _) = execution.switch(core::convert::identity);
+        let () = execution.switch(|_| after_exit(arg, stack));
+        // Stack is no longer used, but we do not want to return
+        unreachable!("switched back to the finished execution")
+    })
+}
+
 impl<Arg> Fiber<Arg> {
-    /// Create a new `Fiber`.
-    ///
-    /// Create a fiber by using a default-initialized [`DefaultStack`] instance.
-    ///
-    /// For more details see [`Fiber::with_stack`].
-    #[cfg(feature = "default-stack")]
-    pub fn new<F, Q, Return>(f: F) -> Self
-    where
-        F: FnOnce(Arg) -> (Fiber<Return>, Q) + 'static,
-        Q: FnOnce(DefaultStack) -> Return + 'static,
-        Return: 'static,
-        Arg: 'static,
-    {
-        Fiber::with_stack(f, DefaultStack::default())
-    }
-
-    /// Create a new `Fiber` with some specified `stack`
-    ///
-    /// Initializes the stack to be ready for the initial switch, but doesn't call the `f` closure argument yet.
-    /// Closure `f` is expected to return a pair of two objects: an `Fiber` to switch to after `f` returns, and a closure of type `Q` that is run on that `Fiber`'s stack.
-    /// The `Q` closure converts previously used stack into some payload of type `Return`.
-    /// It has similar purpose as the input closure of [`Fiber::switch`], see its documentation for more details.
-    ///
-    /// # Unwinding
-    ///
-    /// If call to `f` ever panics or unwinds then the entire process is aborted.
-    pub fn with_stack<F, Q, Return, Stack>(f: F, stack: Stack) -> Self
-    where
-        F: FnOnce(Arg) -> (Fiber<Return>, Q) + 'static,
-        Q: FnOnce(Stack) -> Return + 'static,
-        Return: 'static,
-        Arg: 'static,
-        Stack: stack::Stack + 'static,
-    {
-        let sp = unsafe { arch::fiber_init_stack(&stack) };
-        let exec = Fiber::<Infallible> {
-            sp,
-            _arg: PhantomData,
-            _thread_unsafe: PhantomData,
-            _unwind_unsafe: PhantomData,
-        };
-        // Never return from this as this is the "main" function of any `Fiber`
-        exec.switch(|execution| {
-            // Double panic is good enough to prevent UB from happening.  It would either abort
-            // in case unwinding is enabled, halt, or stuck in a loop forever, which is fine
-            // because `Fiber`s are `!Send`.
-            let _guard = scopeguard::guard((), |()| {
-                panic!("execution panicked, aborting...");
-            });
-
-            let input = execution.switch(core::convert::identity);
-            let (execution, exit) = f(input);
-            let () = execution.switch(|_| exit(stack));
-            // Stack is no longer used, but we do not want to return
-            unreachable!("switched back to the finished execution")
-        })
-    }
-
     /// Context switch
     ///
     /// Switch or jump to a different `Fiber`. Suspends the current execution, then resumes `self` fiber and calls the `intermediate` closure, while passing previous execution as another `Fiber`.
