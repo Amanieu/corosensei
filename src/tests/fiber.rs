@@ -8,15 +8,7 @@ use std::string::ToString;
 use std::{println, ptr};
 
 use crate::{fiber, Fiber};
-
-macro_rules! RecursiveFiber {
-    () => {
-        ()
-    };
-    (+ $($rest:tt)*) => {
-        Fiber<RecursiveFiber!($($rest)*)>
-    };
-}
+use Fiber as F;
 
 #[test]
 fn smoke() {
@@ -36,7 +28,7 @@ fn smoke() {
 fn suspend_and_resume() {
     let hit = Rc::new(Cell::new(false));
     let hit2 = hit.clone();
-    let fiber = fiber().switch(move |parent: RecursiveFiber![+++++ ++]| {
+    let fiber = fiber().switch(move |parent: F<F<F<F<F<F<F<()>>>>>>>| {
         let parent = parent.switch(identity);
         let parent = parent.switch(identity);
         hit2.set(true);
@@ -73,7 +65,7 @@ fn backtrace_traces_to_host() {
 
     fn run_test() {
         assert!(contains_host());
-        let fiber = fiber().switch(move |parent: RecursiveFiber![+++++ ++]| {
+        let fiber = fiber().switch(move |parent: F<F<F<F<F<F<F<()>>>>>>>| {
             let parent = parent.switch(identity);
             assert!(!contains_host());
             let parent = parent.switch(identity);
