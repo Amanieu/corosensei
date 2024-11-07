@@ -1,8 +1,10 @@
 extern crate alloc;
 extern crate std;
 
+use std::boxed::Box;
 use std::cell::Cell;
-use std::convert::identity;
+use std::convert::{identity, Infallible};
+use std::panic::{catch_unwind, resume_unwind};
 use std::rc::Rc;
 use std::string::ToString;
 use std::{println, ptr};
@@ -156,3 +158,28 @@ fn stack_growth() {
     });
     fiber.switch(identity);
 }
+
+#[test]
+#[should_panic = "oh no"]
+fn panic_from_switch() {
+    fiber::<()>().switch(|f| f.switch(|_| panic!("oh no")))
+}
+
+#[test]
+fn unwind_through_switch() {
+    struct Unique(Fiber<(Fiber<()>, ())>);
+    unsafe impl Send for Unique {}
+    unsafe impl Sync for Unique {}
+
+    let payload = catch_unwind(|| {
+        let _: Infallible =
+            fiber::<()>().switch(|f| f.switch(|f| resume_unwind(Box::new(Unique(f)))));
+    })
+    .unwrap_err();
+
+    let fiber = payload.downcast::<Unique>().unwrap();
+    // cleanup
+    () = fiber.0.switch(|f| (f, ()));
+}
+
+// TODO: panic_in_sythetic_fiber test

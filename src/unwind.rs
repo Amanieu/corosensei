@@ -348,26 +348,26 @@ cfg_if::cfg_if! {
     // the 32-byte shadow space and can use the same registers as
     // the generic x86_64 implementation.
     if #[cfg(target_arch = "x86_64")] {
-        pub type SwitchFiberFunc = unsafe extern "sysv64" fn(
+        pub type SwitchFiberFunc = unsafe extern "sysv64-unwind" fn(
             sp: StackPointer,
             arg: EncodedValue,
             obj: *mut ffi::c_void,
         );
         macro_rules! fiber_switch_func_abi {
             (unsafe fn $($tt:tt)*) => {
-                unsafe extern "sysv64" fn $($tt)*
+                unsafe extern "sysv64-unwind" fn $($tt)*
             }
         }
     } else {
         // TODO: Consider fastcall on x86
-        pub type SwitchFiberFunc = unsafe extern "C" fn(
+        pub type SwitchFiberFunc = unsafe extern "C-unwind" fn(
             sp: StackPointer,
             arg: EncodedValue,
             obj: *mut ffi::c_void,
         );
         macro_rules! fiber_switch_func_abi {
             (unsafe fn $($tt:tt)*) => {
-                unsafe extern "C" fn $($tt)*
+                unsafe extern "C-unwind" fn $($tt)*
             }
         }
     }

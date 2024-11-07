@@ -71,26 +71,19 @@ where
     Return: 'static,
     Stack: stack::Stack + 'static,
 {
-    let sp = unsafe { arch::fiber_init_stack(&stack) };
-    let exec = Fiber::<Infallible> {
-        sp,
-        _arg: PhantomData,
-        _thread_unsafe: PhantomData,
-        _unwind_unsafe: PhantomData,
-    };
+    // SAFETY: TODO
+    let exec = unsafe { fiber_unchecked(stack.base()) };
     // Never return from this as this is the "main" function of any `Fiber`
     exec.switch(|execution| {
         // Double panic is good enough to prevent UB from happening.  It would either abort
         // in case unwinding is enabled, halt, or stuck in a loop forever, which is fine
         // because `Fiber`s are `!Send`.
         let _guard = scopeguard::guard((), |()| {
-            panic!("execution panicked, aborting...");
+            panic!("fiber panicked, aborting...");
         });
 
         let (execution, arg): (Fiber<_>, _) = execution.switch(core::convert::identity);
-        let () = execution.switch(|_| after_exit(arg, stack));
-        // Stack is no longer used, but we do not want to return
-        unreachable!("switched back to the finished execution")
+        execution.switch(|_| after_exit(arg, stack))
     })
 }
 
@@ -119,10 +112,6 @@ impl<Arg> Fiber<Arg> {
             ) where
                 F: FnOnce(Fiber<YieldBack>) -> Arg + 'static,
             {
-                // TODO: unwind support?
-                let guard = scopeguard::guard((), |()| {
-                    panic!("execution panicked, aborting...");
-                });
                 let SwitchPayload { function } = decode_val::<SwitchPayload<F>>(arg);
                 let execution = Fiber {
                     sp,
@@ -131,7 +120,6 @@ impl<Arg> Fiber<Arg> {
                     _unwind_unsafe: PhantomData,
                 };
                 ret.cast::<Arg>().write(function(execution));
-                mem::forget(guard);
             }
         }
 
