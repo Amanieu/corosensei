@@ -187,7 +187,7 @@ extern "C" {
 }
 
 #[inline]
-pub unsafe fn fiber_init_stack(stack: &impl Stack) -> StackPointer {
+pub unsafe fn fiber_init_stack(stack_base: StackPointer) -> StackPointer {
     unsafe extern "C" fn entry(
         sp: StackPointer,
         arg: EncodedValue,
@@ -199,7 +199,7 @@ pub unsafe fn fiber_init_stack(stack: &impl Stack) -> StackPointer {
         f(sp, arg, ptr::null_mut())
     }
 
-    let mut sp = stack.base().get();
+    let mut sp = stack_base.get();
 
     // Put the entry function pointer
     push(&mut sp, Some(entry as StackWord));

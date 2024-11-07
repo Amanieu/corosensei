@@ -50,6 +50,17 @@ where
     )
 }
 
+// TODO: docs
+pub unsafe fn fiber_unchecked(stack_base: StackPointer) -> Fiber<Infallible> {
+    let sp = unsafe { arch::fiber_init_stack(stack_base) };
+    Fiber::<Infallible> {
+        sp,
+        _arg: PhantomData,
+        _thread_unsafe: PhantomData,
+        _unwind_unsafe: PhantomData,
+    }
+}
+
 // TODO: update docs
 /// Create a new `Fiber` with some specified `stack`
 ///
