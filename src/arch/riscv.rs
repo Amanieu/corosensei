@@ -308,7 +308,6 @@ pub unsafe fn fiber_switch(
         lateout("fs0") _, lateout("fs1") _, lateout("fs2") _, lateout("fs3") _,
         lateout("fs4") _, lateout("fs5") _, lateout("fs6") _, lateout("fs7") _,
         lateout("fs8") _, lateout("fs9") _, lateout("fs10") _, lateout("fs11") _,
-        lateout("x28") _,
         clobber_abi("C"),
     );
     f(StackPointer::new_unchecked(sp), arg, ret)
