@@ -297,8 +297,8 @@ pub unsafe fn fiber_switch(
         "mv a0, t1",
         "ret",
         "2:",
-        l!("s1", 1, "sp"),
-        l!("s0", 2, "sp"),
+        l!("s1", 0, "sp"),
+        l!("s0", 1, "sp"),
         addi!("sp", "sp", 2),
 
         inlateout("a0") sp, inlateout("a1") arg, inlateout("a3") f,
