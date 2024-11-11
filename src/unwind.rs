@@ -342,39 +342,11 @@ cfg_if::cfg_if! {
     }
 }
 
-cfg_if::cfg_if! {
-    // Force the use of the SysV64 ABI on Windows, it makes the
-    // assembly code much simpler since we don't need to worry about
-    // the 32-byte shadow space and can use the same registers as
-    // the generic x86_64 implementation.
-    if #[cfg(target_arch = "x86_64")] {
-        pub type SwitchFiberFunc = unsafe extern "sysv64-unwind" fn(
-            sp: StackPointer,
-            arg: EncodedValue,
-            obj: *mut ffi::c_void,
-        );
-        macro_rules! fiber_switch_func_abi {
-            (unsafe fn $($tt:tt)*) => {
-                unsafe extern "sysv64-unwind" fn $($tt)*
-            }
-        }
-    } else {
-        // TODO: Consider fastcall on x86
-        pub type SwitchFiberFunc = unsafe extern "C-unwind" fn(
-            sp: StackPointer,
-            arg: EncodedValue,
-            obj: *mut ffi::c_void,
-        );
-        macro_rules! fiber_switch_func_abi {
-            (unsafe fn $($tt:tt)*) => {
-                unsafe extern "C-unwind" fn $($tt)*
-            }
-        }
-    }
-}
+pub type SwitchFiberFunc =
+    unsafe extern "C-unwind" fn(sp: StackPointer, arg: EncodedValue, obj: *mut ffi::c_void);
 
 #[allow(unused_imports)]
 pub(crate) use {
     asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size, cfi_reset_args_size_root,
-    cfi_reset_args_size_yield, fiber_switch_func_abi, initial_func_abi,
+    cfi_reset_args_size_yield, initial_func_abi,
 };

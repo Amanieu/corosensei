@@ -3,7 +3,6 @@ use core::{convert::Infallible, ffi, marker::PhantomData, mem, ptr};
 use crate::{
     arch,
     stack::{self, DefaultStack, StackPointer},
-    unwind::fiber_switch_func_abi,
     util::{decode_val, encode_val, EncodedValue},
 };
 
@@ -115,23 +114,21 @@ impl<Arg> Fiber<Arg> {
         F: FnOnce(Fiber<YieldBack>) -> Arg + 'static,
         Arg: 'static,
     {
-        fiber_switch_func_abi! {
-            unsafe fn switcheroo<Arg, YieldBack, F>(
-                sp: StackPointer,
-                arg: EncodedValue,
-                ret: *mut ffi::c_void,
-            ) where
-                F: FnOnce(Fiber<YieldBack>) -> Arg + 'static,
-            {
-                let SwitchPayload { function } = decode_val::<SwitchPayload<F>>(arg);
-                let execution = Fiber {
-                    sp,
-                    _arg: PhantomData,
-                    _thread_unsafe: PhantomData,
-                    _unwind_unsafe: PhantomData,
-                };
-                ret.cast::<Arg>().write(function(execution));
-            }
+        unsafe extern "C-unwind" fn switcheroo<Arg, YieldBack, F>(
+            sp: StackPointer,
+            arg: EncodedValue,
+            ret: *mut ffi::c_void,
+        ) where
+            F: FnOnce(Fiber<YieldBack>) -> Arg + 'static,
+        {
+            let SwitchPayload { function } = decode_val::<SwitchPayload<F>>(arg);
+            let execution = Fiber {
+                sp,
+                _arg: PhantomData,
+                _thread_unsafe: PhantomData,
+                _unwind_unsafe: PhantomData,
+            };
+            ret.cast::<Arg>().write(function(execution));
         }
 
         let mut output = mem::MaybeUninit::<YieldBack>::uninit();
