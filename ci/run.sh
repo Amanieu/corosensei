@@ -7,7 +7,7 @@ if [ "${CROSS}" = "1" ]; then
     export CARGO_NET_RETRY=5
     export CARGO_NET_TIMEOUT=10
 
-    cargo install cross
+    cargo install cross --git https://github.com/cross-rs/cross --rev 4090beca3cfffa44371a5bba524de3a578aa46c3
     CARGO=cross
 fi
 
