@@ -45,6 +45,7 @@ jobs:
           riscv64gc-unknown-linux-gnu,
           i686-pc-windows-gnu,
           i686-pc-windows-msvc,
+          loongarch64-unknown-linux-gnu,
         ]
         channel: [stable, nightly]
         include:
@@ -76,3 +77,5 @@ jobs:
           os: windows-latest
         - target: i686-pc-windows-gnu
           os: windows-latest
+        - target: loongarch64-unknown-linux-gnu
+          os: ubuntu-latest
