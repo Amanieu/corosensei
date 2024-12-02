@@ -250,12 +250,14 @@ Two benchmarks are available via `cargo bench`:
 - "Coroutine switch" measures the time taken to resume a coroutine and then for that coroutine to yield back to its caller.
 - "Coroutine call" measures the time taken to create a new coroutine which returns immediately, call it and then drop the coroutine.
 
-Benchmark results when running on Linux:
+Benchmark results when running on macOS and Linux:
 
 | Arch        | CPU               | Frequency         | Benchmark        | Time      | Cycles  |
 | ----------- | ----------------- | ----------------- | ---------------- | --------- | ------- |
 | AArch64     | Apple M1 Max      | 2.06GHz - 3.22GHz | Coroutine switch | 3.8665 ns | N/A     |
 | AArch64     | Apple M1 Max      | 2.06GHz - 3.22GHz | Coroutine call   | 6.4813 ns | N/A     |
+| AArch64     | Apple M3 Max      | 2.8GHz - 4.05GHz  | Coroutine switch | 1.8212 ns | N/A     |
+| AArch64     | Apple M3 Max      | 2.8GHz - 4.05GHz  | Coroutine call   | 2.6318 ns | N/A     |
 | x86-64      | AMD Ryzen 9 3950X | 3.5GHz - 4.7GHz   | Coroutine switch | 4.2867 ns | 14.8249 |
 | x86-64      | AMD Ryzen 9 3950X | 3.5GHz - 4.7GHz   | Coroutine call   | 5.5082 ns | 19.0069 |
 | AArch64     | ARM Cortex-A72    | 1.6GHz            | Coroutine switch | 16.278 ns | N/A     |
