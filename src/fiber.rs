@@ -184,4 +184,24 @@ impl<Arg> Fiber<Arg> {
         mem::forget(guard);
         output
     }
+
+    /// Converts [`Fiber`] into a raw stack pointer. Use [`Fiber::from_raw`] to convert it back.
+    pub fn into_raw(self) -> StackPointer {
+        self.sp
+    }
+
+    /// Converts raw stack pointer returned from [`Fiber::into_raw`] back to a [`Fiber`].
+    ///
+    /// # Safety
+    ///
+    /// The `sp` argument must come from [`Fiber::into_raw`] call.
+    /// Recovered [`Fiber`] must have same specified type parameter as before.
+    pub unsafe fn from_raw(sp: StackPointer) -> Self {
+        Fiber {
+            sp,
+            _arg: PhantomData,
+            _thread_unsafe: PhantomData,
+            _unwind_unsafe: PhantomData,
+        }
+    }
 }
