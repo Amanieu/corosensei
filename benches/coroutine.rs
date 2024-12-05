@@ -19,13 +19,15 @@ fn coroutine_switch<M: Measurement + 'static>(name: &str, c: &mut Criterion<M>) 
 
 fn coroutine_call<M: Measurement + 'static>(name: &str, c: &mut Criterion<M>) {
     // Don't count time spent allocating a stack.
-    let mut stack = DefaultStack::default();
+    let mut stack = Some(DefaultStack::default());
 
     c.bench_function(name, move |b| {
         b.iter(|| {
+            let s = stack.take().unwrap();
             let mut identity =
-                Coroutine::<usize, (), usize, _>::with_stack(&mut stack, |_yielder, input| input);
-            identity.resume(black_box(0usize))
+                Coroutine::<usize, (), usize, _>::with_stack(s, |_yielder, input| input);
+            identity.resume(black_box(0usize));
+            stack = Some(identity.into_stack());
         })
     });
 }
