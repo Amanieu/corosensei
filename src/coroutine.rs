@@ -168,6 +168,7 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
         Input: 'static,
         Yield: 'static,
         Return: 'static,
+        Stack: 'static,
     {
         // The ABI of the initial function is either "C" or "C-unwind" depending
         // on whether the "asm-unwind" feature is enabled.
