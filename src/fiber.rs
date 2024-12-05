@@ -30,12 +30,17 @@ pub struct Fiber<Yield> {
     _unwind_unsafe: PhantomData<&'static mut ()>,
 }
 
-// TODO: update docs
 /// Create a new `Fiber`.
 ///
-/// Create a fiber by using a default-initialized [`DefaultStack`] instance.
+/// Create a fiber with default-initialized [`DefaultStack`].
+/// After switching to it, it immediately switches back after [`intermediate`](`Fiber::switch`) returns another fiber to switch to.
+/// `Return` type can be used to send objects between fibers.
 ///
-/// For more details see [`Fiber::with_stack`].
+/// To specify a custom stack and to recover it after fiber's destruction use [`fiber_with_stack`].
+///
+/// # Unwinding
+///
+/// In case fiber catches a panic, it aborts current execution (using double-panic).
 pub fn fiber<Return>() -> Fiber<(Fiber<Return>, Return)>
 where
     Return: 'static,
@@ -49,28 +54,18 @@ where
     )
 }
 
-// TODO: docs
-pub unsafe fn fiber_unchecked(stack_base: StackPointer) -> Fiber<Infallible> {
-    let sp = unsafe { arch::fiber_init_stack(stack_base) };
-    Fiber::<Infallible> {
-        sp,
-        _arg: PhantomData,
-        _thread_unsafe: PhantomData,
-        _unwind_unsafe: PhantomData,
-    }
-}
-
-// TODO: update docs
-/// Create a new `Fiber` with some specified `stack`
+/// Create a new `Fiber` with custom `stack`.
 ///
-/// Initializes the stack to be ready for the initial switch, but doesn't call the `f` closure argument yet.
-/// Closure `f` is expected to return a pair of two objects: an `Fiber` to switch to after `f` returns, and a closure of type `Q` that is run on that `Fiber`'s stack.
-/// The `Q` closure converts previously used stack into some payload of type `Return`.
-/// It has similar purpose as the input closure of [`Fiber::switch`], see its documentation for more details.
+/// Similar to [`fiber`] except for the explicit stack control.
+/// After switching to it, it immediately switches back after [`intermediate`](`Fiber::switch`) returns another fiber to switch to.
+/// Then `after_exit` is called, from which you can recover and save used stack by storing it into the `Return` object.
+/// `Arg` and `Return` types can be used to send objects between fibers, including the used stack.
+///
+/// If you don't care about managing stacks, see [`fiber`].
 ///
 /// # Unwinding
 ///
-/// If call to `f` ever panics or unwinds then the entire process is aborted.
+/// In case fiber catches a panic, it aborts current execution (using double-panic).
 pub fn fiber_with_stack<Arg, Return, F, Stack>(
     after_exit: F,
     stack: Stack,
@@ -81,7 +76,8 @@ where
     Return: 'static,
     Stack: stack::Stack + 'static,
 {
-    // SAFETY: TODO
+    // SAFETY: We never return from the intermediate function and do not reference any of the stack
+    // variables from outside.
     let exec = unsafe { fiber_unchecked(stack.base()) };
     // Never return from this as this is the "main" function of any `Fiber`
     exec.switch(|execution| {
@@ -95,6 +91,27 @@ where
         let (execution, arg): (Fiber<_>, _) = execution.switch(core::convert::identity);
         execution.switch(|_| after_exit(arg, stack))
     })
+}
+
+/// Unsafely create a `Fiber`.
+///
+/// A stronger version of [`fiber`] and [`fiber_with_stack`] constructors.
+/// After switching to it, you cannot return from the [`intermediate`](`Fiber::switch`) closure.
+/// The only way to get rid of this fiber is to switch to another fiber and drop this one.
+///
+/// # Safety
+///
+/// The `stack_base` must be the stack's base pointer, which you can get from `Stack::base`.
+/// Used stack can be deallocated or reused only if you ensure fiber's stack variables aren't
+/// referenced from somewhere else.
+pub unsafe fn fiber_unchecked(stack_base: StackPointer) -> Fiber<Infallible> {
+    let sp = unsafe { arch::fiber_init_stack(stack_base) };
+    Fiber::<Infallible> {
+        sp,
+        _arg: PhantomData,
+        _thread_unsafe: PhantomData,
+        _unwind_unsafe: PhantomData,
+    }
 }
 
 impl<Arg> Fiber<Arg> {
@@ -205,3 +222,5 @@ impl<Arg> Fiber<Arg> {
         }
     }
 }
+
+// TODO: BorrowingFiber
