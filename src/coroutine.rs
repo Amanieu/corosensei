@@ -170,6 +170,14 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
         Return: 'static,
         Stack: 'static,
     {
+        unsafe { Self::with_stack_unchecked(stack, f) }
+    }
+
+    /// Unsafe version of [`Coroutine::with_stack`], i.e. without lifetime bounds.
+    pub unsafe fn with_stack_unchecked<F>(stack: Stack, f: F) -> Self
+    where
+        F: FnOnce(&Yielder<Input, Yield>, Input) -> Return,
+    {
         // The ABI of the initial function is either "C" or "C-unwind" depending
         // on whether the "asm-unwind" feature is enabled.
         initial_func_abi! {
