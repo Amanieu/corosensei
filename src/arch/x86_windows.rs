@@ -721,6 +721,18 @@ pub unsafe fn drop_initial_obj(
     *base.sub(2) = *stack.add(5); // GuaranteedStackBytes
 }
 
+/// This function is called by `force_reset` to update the mutable TEB fields
+/// at the bottom of the parent stack with the ones from the suspended state.
+///
+/// The coroutine must be in a suspended state and *not* in the initial state.
+#[inline]
+pub unsafe fn reset_teb_fields_from_suspended(stack_base: StackPointer, stack_ptr: StackPointer) {
+    let base = stack_base.get() as *mut StackWord;
+    let stack = stack_ptr.get() as *const StackWord;
+    *base.sub(1) = *stack.add(5); // StackLimit
+    *base.sub(2) = *stack.add(7); // GuaranteedStackBytes
+}
+
 /// This function must be called after a stack has finished running a coroutine
 /// so that the `StackLimit` and `GuaranteedStackBytes` fields from the TEB can
 /// be updated in the stack. This is necessary if the stack is reused for

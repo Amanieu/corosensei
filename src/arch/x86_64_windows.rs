@@ -470,7 +470,7 @@ pub unsafe fn switch_and_reset(arg: EncodedValue, parent_link: *mut StackPointer
     asm!(
         // Write the 2 TEB fields which can change during corountine execution
         // to the base of the stack. This is later recovered by
-        // update_teb_from_stack().
+        // update_stack_teb_fields().
         "mov rax, gs:[0x10]", // StackLimit
         "mov [rdx + 24], rax",
         "mov rax, gs:[0x1748]", // GuaranteedStackBytes
@@ -556,7 +556,7 @@ pub unsafe fn switch_and_throw(
 
         // Upon returning, our register state is just like a normal return into
         // switch_and_link().
-        "2",
+        "2:",
 
         // This is copied from the second half of switch_and_link().
         "pop rbx",
@@ -604,6 +604,18 @@ pub unsafe fn drop_initial_obj(
     let stack = stack_ptr.get() as *const StackWord;
     *base.sub(1) = *stack.add(2); // StackLimit
     *base.sub(2) = *stack.add(4); // GuaranteedStackBytes
+}
+
+/// This function is called by `force_reset` to update the mutable TEB fields
+/// at the bottom of the parent stack with the ones from the suspended state.
+///
+/// The coroutine must be in a suspended state and *not* in the initial state.
+#[inline]
+pub unsafe fn reset_teb_fields_from_suspended(stack_base: StackPointer, stack_ptr: StackPointer) {
+    let base = stack_base.get() as *mut StackWord;
+    let stack = stack_ptr.get() as *const StackWord;
+    *base.sub(1) = *stack.add(5); // StackLimit
+    *base.sub(2) = *stack.add(7); // GuaranteedStackBytes
 }
 
 /// This function must be called after a stack has finished running a coroutine
