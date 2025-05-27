@@ -312,6 +312,12 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
     /// This can only be done safely if there are no objects currently on the
     /// coroutine's stack that need to execute `Drop` code.
     pub unsafe fn force_reset(&mut self) {
+        #[cfg(windows)]
+        if let Some(stack_ptr) = self.stack_ptr {
+            if self.started() {
+                arch::reset_teb_fields_from_suspended(self.stack.base(), stack_ptr);
+            }
+        }
         self.stack_ptr = None;
     }
 
