@@ -164,6 +164,9 @@ cfg_if::cfg_if! {
     } else if #[cfg(all(target_arch = "loongarch64", not(windows)))] {
         mod loongarch64;
         pub use self::loongarch64::*;
+    } else if #[cfg(all(target_arch = "s390x", not(windows)))] {
+        mod s390x;
+        pub use self::s390x::*;
     } else {
         compile_error!("Unsupported target");
     }
