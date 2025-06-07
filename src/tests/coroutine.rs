@@ -467,6 +467,8 @@ mod trap_handler {
                     sp = (*context.uc_mcontext).__ss.__sp as usize;
                 } else if #[cfg(all(target_os = "linux", target_arch = "loongarch64"))] {
                     sp = context.uc_mcontext.__gregs[3]  as usize;
+                } else if #[cfg(all(target_os = "linux", target_arch = "s390x"))] {
+                    sp = context.uc_mcontext.gregs[15] as usize;
                 } else {
                     compile_error!("Unsupported platform");
                 }
@@ -573,6 +575,10 @@ mod trap_handler {
                     context.uc_mcontext.__gregs[4] = a0;
                     context.uc_mcontext.__gregs[5] = a1;
                     context.uc_mcontext.__gregs[22] = fp;
+                } else if #[cfg(all(target_os = "linux", target_arch = "s390x"))] {
+                    let TrapHandlerRegs { stack_ptr } = regs;
+                    // s390x minimal trap handler register update
+                    context.uc_mcontext.gregs[15] = stack_ptr.get() as u64;
                 } else {
                     compile_error!("Unsupported platform");
                 }
