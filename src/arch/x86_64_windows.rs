@@ -110,6 +110,7 @@
 use core::arch::{asm, global_asm};
 
 use super::{allocate_obj_on_stack, push};
+use crate::coroutine::adjusted_stack_base;
 use crate::stack::{Stack, StackPointer, StackTebFields};
 use crate::unwind::{
     asm_may_unwind_root, asm_may_unwind_yield, InitialFunc, StackCallFunc, TrapHandler,
@@ -117,7 +118,8 @@ use crate::unwind::{
 use crate::util::EncodedValue;
 
 pub const STACK_ALIGNMENT: usize = 16;
-pub const PARENT_LINK_OFFSET: usize = 0;
+pub const PARENT_STACK_OFFSET: usize = 0;
+pub const PARENT_LINK_OFFSET: usize = 32;
 pub type StackWord = u64;
 
 global_asm!(
@@ -287,7 +289,7 @@ extern "C" {
 
 #[inline]
 pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) -> StackPointer {
-    let mut sp = stack.base().get();
+    let mut sp = adjusted_stack_base(stack).get();
 
     // Placeholders for returning TEB.StackLimit and TEB.GuaranteedStackBytes.
     push(&mut sp, None);
@@ -624,7 +626,7 @@ pub unsafe fn reset_teb_fields_from_suspended(stack_base: StackPointer, stack_pt
 /// another coroutine.
 #[inline]
 pub unsafe fn update_stack_teb_fields(stack: &mut impl Stack) {
-    let base = stack.base().get() as *const StackWord;
+    let base = adjusted_stack_base(stack).get() as *const StackWord;
     let stack_limit = *base.sub(1) as usize;
     let guaranteed_stack_bytes = *base.sub(2) as usize;
     stack.update_teb_fields(stack_limit, guaranteed_stack_bytes);
@@ -688,7 +690,7 @@ pub unsafe fn setup_trap_trampoline<T>(
 ) -> TrapHandlerRegs {
     // Preserve the top 32 bytes of the stack since they contain the parent
     // link. The top 16 bytes are filled by switch_and_reset() with TEB fields.
-    let parent_link = stack_base.get() - 32;
+    let parent_link = stack_base.get() - PARENT_LINK_OFFSET;
 
     // Everything below this can be overwritten. Write the object to the stack.
     let mut sp = parent_link;
@@ -716,7 +718,7 @@ pub unsafe fn setup_trap_trampoline<T>(
 #[inline]
 pub unsafe fn on_stack<S: Stack>(arg: *mut u8, stack: S, f: StackCallFunc) {
     let stack = scopeguard::guard(stack, |mut stack| {
-        let base = stack.base().get() as *const u64;
+        let base = adjusted_stack_base(&stack).get() as *const u64;
         let stack_limit = *base.sub(1) as usize;
         let guaranteed_stack_bytes = *base.sub(2) as usize;
         stack.update_teb_fields(stack_limit, guaranteed_stack_bytes);
@@ -727,7 +729,7 @@ pub unsafe fn on_stack<S: Stack>(arg: *mut u8, stack: S, f: StackCallFunc) {
     asm_may_unwind_root!(
         concat!("call ", asm_mangle!("stack_call_trampoline")),
         in("rdi") arg,
-        in("rsi") stack.base().get(),
+        in("rsi") adjusted_stack_base(&*stack).get(),
         in("rdx") f,
         in("r8") teb_fields.StackBase,
         in("r9") teb_fields.StackLimit,
