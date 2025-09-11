@@ -330,21 +330,18 @@ global_asm!(
     concat!(".movsp ", fp!()),
     // As in the original x86_64 code, hand-write the call operation so that it
     // doesn't push an entry into the CPU's return prediction stack.
-    thumb2!(thumb_symbol_adr!(
-        "lr",
-        asm_mangle!("stack_init_trampoline_return")
-    )),
+    thumb2!(thumb_symbol_adr!("lr", "0f")),
     thumb2!("ldr pc, [r1, #4]"),
-    thumb1!(thumb_symbol_adr!(
-        "r3",
-        asm_mangle!("stack_init_trampoline_return")
-    )),
+    thumb1!(thumb_symbol_adr!("r3", "0f")),
     thumb1!("mov lr, r3"),
     thumb1!("ldr r3, [r1, #4]"),
     thumb1!("bx r3"),
     // The balign here seems to be necessary otherwise LLVM's assembler
     // generates invalid offsets to the label.
     ".balign 4",
+    // Use a local label because stack_init_trampoline_return is a global
+    // symbol, which can cause issues with relocations.
+    "0:",
     thumb_symbol_def!(),
     asm_function_alt_entry!("stack_init_trampoline_return"),
     // This UDF is necessary because of our use of .cfi_signal_frame earlier.

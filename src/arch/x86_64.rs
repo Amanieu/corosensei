@@ -206,11 +206,7 @@ global_asm!(
     // is later executed by a switch_yield() or switch_and_reset() in the
     // initial function. This is the reason why those functions are marked as
     // #[inline(always)].
-    concat!(
-        "lea rcx, [rip + ",
-        asm_mangle!("stack_init_trampoline_return"),
-        "]"
-    ),
+    "lea rcx, [rip + 0f]",
     "push rcx",
     // init_stack() placed the address of the initial function just above the
     // parent link on the stack.
@@ -218,6 +214,9 @@ global_asm!(
     // We don't need to do anything afterwards since the initial function will
     // never return. This is guaranteed by the ! return type.
     //
+    // Use a local label because stack_init_trampoline_return is a global
+    // symbol, which can cause issues with relocations.
+    "0:",
     // Export the return target of the initial trampoline. This is used when
     // setting up a trap handler.
     asm_function_alt_entry!("stack_init_trampoline_return"),
