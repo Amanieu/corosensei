@@ -193,13 +193,12 @@ global_asm!(
     "mov rdx, rsp",
     // As in the original x86_64 code, hand-write the call operation so that it
     // doesn't push an entry into the CPU's return prediction stack.
-    concat!(
-        "lea rcx, [rip + ",
-        asm_mangle!("stack_init_trampoline_return"),
-        "]"
-    ),
+    "lea rcx, [rip + 0f]",
     "push rcx",
     "jmp [rsi + 8]",
+    // Use a local label because stack_init_trampoline_return is a global
+    // symbol, which can cause issues with relocations.
+    "0:",
     asm_function_alt_entry!("stack_init_trampoline_return"),
     // The SEH unwinder works by looking at a return target and scanning forward
     // to look for an epilog code sequence. We add an int3 instruction to avoid

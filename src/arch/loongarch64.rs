@@ -136,6 +136,8 @@ global_asm!(
     "la.pcrel $ra, 0f",
     "ld.d $t0, $a1, 8",
     "jr $t0",
+    // Use a local label because stack_init_trampoline_return is a global
+    // symbol, which can cause issues with relocations.
     "0:",
     asm_function_alt_entry!("stack_init_trampoline_return"),
     // This BREAK is necessary because of our use of .cfi_signal_frame earlier.

@@ -196,9 +196,12 @@ global_asm!(
     concat!(".cfi_offset s0, ", xlen_bytes!(-4)),
     // As in the original x86_64 code, hand-write the call operation so that it
     // doesn't push an entry into the CPU's return prediction stack.
-    concat!("lla ra, ", asm_mangle!("stack_init_trampoline_return")),
+    "lla ra, 0f",
     l!("t0", 1, "a1"),
     "jr t0",
+    // Use a local label because stack_init_trampoline_return is a global
+    // symbol, which can cause issues with relocations.
+    "0:",
     asm_function_alt_entry!("stack_init_trampoline_return"),
     // This UNIMP is necessary because of our use of .cfi_signal_frame earlier.
     "unimp",

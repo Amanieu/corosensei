@@ -131,9 +131,8 @@ global_asm!(
     "adr lr, 0f",
     "ldr x3, [x1, #8]",
     "br x3",
-    // AArch64 Mach-O does not have a way of representing relocations on an ADR
-    // instruction so we have to use a local label that the assembler can fully
-    // resolve ahead of time.
+    // Use a local label because stack_init_trampoline_return is a global
+    // symbol, which can cause issues with relocations.
     "0:",
     asm_function_alt_entry!("stack_init_trampoline_return"),
     // This BRK is necessary because of our use of .cfi_signal_frame earlier.
