@@ -99,12 +99,13 @@
 //! ```
 
 use core::arch::{asm, global_asm};
+use core::{ffi, ptr};
 
 use super::{allocate_obj_on_stack, push};
 use crate::stack::{Stack, StackPointer};
 use crate::unwind::{
     asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size_root, cfi_reset_args_size_yield,
-    InitialFunc, StackCallFunc, TrapHandler,
+    InitialFunc, StackCallFunc, SwitchFiberFunc, TrapHandler,
 };
 use crate::util::EncodedValue;
 
@@ -280,6 +281,61 @@ extern "C" {
     static stack_init_trampoline_return: [u8; 0];
     #[allow(dead_code)]
     fn stack_call_trampoline(arg: *mut u8, sp: StackPointer, f: StackCallFunc);
+}
+
+#[inline]
+pub unsafe fn fiber_init_stack(stack_base: StackPointer) -> StackPointer {
+    unsafe extern "sysv64" fn entry(
+        sp: StackPointer,
+        arg: EncodedValue,
+        // There could be no output buffer on a fresh fiber.
+        // Assuming first `f` function never returns on this fiber.
+        _obj: *mut ffi::c_void,
+        f: SwitchFiberFunc,
+    ) {
+        f(sp, arg, ptr::null_mut())
+    }
+
+    let mut sp = stack_base.get();
+
+    // Zero initialize return pointer
+    push(&mut sp, Some(0));
+    // Put the entry function pointer
+    push(&mut sp, Some(entry as StackWord));
+
+    StackPointer::new_unchecked(sp)
+}
+
+#[inline]
+pub unsafe fn fiber_switch(
+    stack_ptr: StackPointer,
+    mut arg: EncodedValue,
+    ret: *mut ffi::c_void,
+    mut f: SwitchFiberFunc,
+) {
+    let mut sp = stack_ptr.get();
+    // TODO: edit the comment below
+    // The function `fiber_switch` upon its call saves `ret: rdx` output pointer argument and
+    // callee-saved registers (defined by to the AMD64 System-V ABI) to the stack.  So it switches
+    // stacks, restores callee-saved registers and an output pointer argument, then finally it jumps
+    // to the input function pointer in rcx.
+    asm!(
+        "lea rax, [rip + 2f]",
+        "push rbx",
+        "push rbp",
+        "push rax",
+        "mov rax, rsp",
+        "mov rsp, rdi",
+        "mov rdi, rax",
+        "ret",
+        "2:",
+        "pop rbp",
+        "pop rbx",
+        inout("rdi") sp, inout("rsi") arg, inout("rcx") f,
+        lateout("r12") _, lateout("r13") _, lateout("r14") _, lateout("r15") _,
+        clobber_abi("sysv64"),
+    );
+    f(StackPointer::new_unchecked(sp), arg, ret)
 }
 
 /// Sets up the initial state on a stack so that the given function is

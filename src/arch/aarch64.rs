@@ -71,12 +71,13 @@
 //! ```
 
 use core::arch::{asm, global_asm};
+use core::{ffi, ptr};
 
 use super::{allocate_obj_on_stack, push};
 use crate::stack::{Stack, StackPointer};
 use crate::unwind::{
     asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size_root, cfi_reset_args_size_yield,
-    InitialFunc, StackCallFunc, TrapHandler,
+    InitialFunc, StackCallFunc, SwitchFiberFunc, TrapHandler,
 };
 use crate::util::EncodedValue;
 
@@ -182,6 +183,55 @@ extern "C" {
     static stack_init_trampoline_return: [u8; 0];
     #[allow(dead_code)]
     fn stack_call_trampoline(arg: *mut u8, sp: StackPointer, f: StackCallFunc);
+}
+
+#[inline]
+pub unsafe fn fiber_init_stack(stack_base: StackPointer) -> StackPointer {
+    unsafe extern "C" fn entry(
+        sp: StackPointer,
+        arg: EncodedValue,
+        // There could be no output buffer on a fresh fiber.
+        // Assuming first `f` function never returns on this fiber.
+        _obj: *mut ffi::c_void,
+        f: SwitchFiberFunc,
+    ) {
+        f(sp, arg, ptr::null_mut())
+    }
+
+    let mut sp = stack_base.get();
+
+    // Put the entry function pointer
+    push(&mut sp, Some(entry as StackWord));
+
+    StackPointer::new_unchecked(sp)
+}
+
+#[inline]
+pub unsafe fn fiber_switch(
+    stack_ptr: StackPointer,
+    mut arg: EncodedValue,
+    ret: *mut ffi::c_void,
+    mut f: SwitchFiberFunc,
+) {
+    let mut sp = stack_ptr.get();
+    asm!(
+        "stp x19, x29, [sp, #-16]!",
+        "adr lr, 2f",
+        "str lr, [sp, #-8]!",
+        "ldr lr, [x0], #8",
+        "mov x9, sp",
+        "mov sp, x0",
+        "mov x0, x9",
+        "ret",
+        "2:",
+        "ldp x19, x29, [sp], #16",
+        inlateout("x0") sp, inlateout("x1") arg, inlateout("x3") f,
+        lateout("x20") _, lateout("x21") _, lateout("x22") _, lateout("x23") _,
+        lateout("x24") _, lateout("x25") _, lateout("x26") _, lateout("x27") _,
+        lateout("x28") _,
+        clobber_abi("C"),
+    );
+    f(StackPointer::new_unchecked(sp), arg, ret)
 }
 
 #[inline]

@@ -243,11 +243,13 @@ mod unwind;
 
 mod arch;
 mod coroutine;
+mod fiber;
 pub mod stack;
 pub mod trap;
 mod util;
 
 pub use coroutine::*;
+pub use fiber::*;
 
 #[cfg(test)]
 mod tests;

@@ -15,6 +15,8 @@
 
 #![allow(unused_macros)]
 
+use core::ffi;
+
 use crate::stack::StackPointer;
 use crate::util::EncodedValue;
 
@@ -339,6 +341,9 @@ cfg_if::cfg_if! {
         }
     }
 }
+
+pub type SwitchFiberFunc =
+    unsafe extern "C-unwind" fn(sp: StackPointer, arg: EncodedValue, obj: *mut ffi::c_void);
 
 #[allow(unused_imports)]
 pub(crate) use {
