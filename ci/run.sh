@@ -37,3 +37,9 @@ export RUST_TEST_THREADS=1
 #    "${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --features asm-unwind
 #    "${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --features asm-unwind --release
 #fi
+
+# Address sanitizer
+if [ "${CROSS}" = "0" && "${CHANNEL}" = "nightly" ]; then
+    TARGET_RUSTFLAGS=-Zsanitizer=address "${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --features sanitizer --tests
+    TARGET_RUSTFLAGS=-Zsanitizer=address "${CARGO}" test $CARGO_TEST_FLAGS --target "${TARGET}" --all-targets --features sanitizer --release --tests
+fi

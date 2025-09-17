@@ -4,11 +4,12 @@ use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 
 pub use crate::arch::TrapHandlerRegs;
-use crate::stack::StackPointer;
+use crate::sanitizer;
 use crate::unwind::initial_func_abi;
 #[cfg(doc)]
 use crate::Coroutine; // For rustdoc to resolve doc-links
 use crate::{arch, util};
+use crate::{sanitizer::SanitizerFiber, stack::StackPointer};
 
 /// Helper type to force a trapping coroutine to return from a trap handler.
 ///
@@ -87,9 +88,19 @@ impl<Return> CoroutineTrapHandler<Return> {
 
                 let result = crate::unwind::catch_unwind_at_root(f.read());
 
+                // If using sanitizers, restore the parent's stack bounds.
+                unsafe {
+                    (*SanitizerFiber::from_parent_link(parent_link)).start_switch();
+                }
+
                 let mut result = ManuallyDrop::new(result);
                 arch::switch_and_reset(util::encode_val(&mut result), parent_link);
             }
+        }
+
+        // Clear any existing ASAN poisoning on the stack before it is re-used.
+        unsafe {
+            sanitizer::unpoison_stack_range(self.stack_base, self.stack_limit);
         }
 
         // Move the value into the coroutine stack so that it is still available

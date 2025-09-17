@@ -54,6 +54,9 @@ unwind = []
 # efficient but is only available on nightly Rust.
 asm-unwind = ["unwind"]
 
+# Support for running under sanitizers
+sanitizer = []
+
 # Build docs for all supported targets.
 [package.metadata.docs.rs]
 targets = [

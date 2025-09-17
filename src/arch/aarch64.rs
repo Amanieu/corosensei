@@ -73,6 +73,7 @@
 use core::arch::{asm, global_asm};
 
 use super::{allocate_obj_on_stack, push};
+use crate::coroutine::adjusted_stack_base;
 use crate::stack::{Stack, StackPointer};
 use crate::unwind::{
     asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size_root, cfi_reset_args_size_yield,
@@ -81,7 +82,8 @@ use crate::unwind::{
 use crate::util::EncodedValue;
 
 pub const STACK_ALIGNMENT: usize = 16;
-pub const PARENT_LINK_OFFSET: usize = 0;
+pub const PARENT_STACK_OFFSET: usize = 0;
+pub const PARENT_LINK_OFFSET: usize = 16;
 pub type StackWord = u64;
 
 global_asm!(
@@ -186,7 +188,7 @@ extern "C" {
 
 #[inline]
 pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) -> StackPointer {
-    let mut sp = stack.base().get();
+    let mut sp = adjusted_stack_base(stack).get();
 
     // Initial function.
     push(&mut sp, Some(func as StackWord));
@@ -497,7 +499,7 @@ pub unsafe fn setup_trap_trampoline<T>(
 ) -> TrapHandlerRegs {
     // Preserve the top 16 bytes of the stack since they contain the parent
     // link.
-    let parent_link = stack_base.get() - 16;
+    let parent_link = stack_base.get() - PARENT_LINK_OFFSET;
 
     // Everything below this can be overwritten. Write the object to the stack.
     let mut sp = parent_link;
@@ -530,7 +532,7 @@ pub unsafe fn on_stack(arg: *mut u8, stack: impl Stack, f: StackCallFunc) {
         concat!("bl ", asm_mangle!("stack_call_trampoline")),
         "nop",
         in("x0") arg,
-        in("x1") stack.base().get(),
+        in("x1") adjusted_stack_base(&stack).get(),
         in("x2") f,
         clobber_abi("C"),
     );

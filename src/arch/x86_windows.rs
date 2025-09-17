@@ -129,6 +129,7 @@ use core::arch::{asm, global_asm};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use super::{allocate_obj_on_stack, push};
+use crate::coroutine::adjusted_stack_base;
 use crate::stack::{Stack, StackPointer, StackTebFields};
 use crate::unwind::{
     asm_may_unwind_root, asm_may_unwind_yield, cfi_reset_args_size_yield, InitialFunc,
@@ -137,7 +138,8 @@ use crate::unwind::{
 use crate::util::EncodedValue;
 
 pub const STACK_ALIGNMENT: usize = 4;
-pub const PARENT_LINK_OFFSET: usize = 0;
+pub const PARENT_STACK_OFFSET: usize = 0;
+pub const PARENT_LINK_OFFSET: usize = 16;
 pub type StackWord = u32;
 
 // On MinGW, we emit DWARF CFI information so that it can be used by GDB to
@@ -366,7 +368,7 @@ fn ntdll_final_exception_handler() -> usize {
 
 #[inline]
 pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) -> StackPointer {
-    let mut sp = stack.base().get();
+    let mut sp = adjusted_stack_base(stack).get();
 
     // Placeholder for returning TEB.StackLimit.
     push(&mut sp, None);
@@ -583,7 +585,7 @@ pub unsafe fn switch_and_reset(arg: EncodedValue, parent_link: *mut StackPointer
     asm!(
         // Write the 2 TEB fields which can change during corountine execution
         // to the base of the stack. This is later recovered by
-        // update_teb_from_stack().
+        // update_stack_teb_fields().
         "mov eax, fs:[0x8]", // StackLimit
         "mov [edi + 12], eax",
         "mov eax, fs:[0xf78]", // GuaranteedStackBytes
@@ -739,7 +741,7 @@ pub unsafe fn reset_teb_fields_from_suspended(stack_base: StackPointer, stack_pt
 /// another coroutine.
 #[inline]
 pub unsafe fn update_stack_teb_fields(stack: &mut impl Stack) {
-    let base = stack.base().get() as *const StackWord;
+    let base = adjusted_stack_base(stack).get() as *const StackWord;
     let stack_limit = *base.sub(1) as usize;
     let guaranteed_stack_bytes = *base.sub(2) as usize;
     stack.update_teb_fields(stack_limit, guaranteed_stack_bytes);
@@ -807,7 +809,7 @@ pub unsafe fn setup_trap_trampoline<T>(
     // - Space for returning the TEB fields, filled by switch_and_reset().
     // - The parent link.
     // - The initial SEH exception handler record.
-    let parent_link = stack_base.get() - 16;
+    let parent_link = stack_base.get() - PARENT_LINK_OFFSET;
 
     // Everything below this can be overwritten. Write the object to the stack.
     let mut sp = parent_link - 8;
@@ -843,14 +845,14 @@ pub unsafe fn setup_trap_trampoline<T>(
 #[inline]
 pub unsafe fn on_stack<S: Stack>(arg: *mut u8, stack: S, f: StackCallFunc) {
     let stack = scopeguard::guard(stack, |mut stack| {
-        let base = stack.base().get() as *const usize;
+        let base = adjusted_stack_base(&stack).get() as *const usize;
         let stack_limit = *base.sub(4);
         let guaranteed_stack_bytes = *base.sub(5);
         stack.update_teb_fields(stack_limit, guaranteed_stack_bytes);
     });
 
     // Set up the values on the new stack.
-    let mut sp = stack.base().get();
+    let mut sp = adjusted_stack_base(&*stack).get();
 
     // Add 4 bytes of padding for SAFESEH which requires that the exception
     // handler record does not extend all the way to the stack base.

@@ -243,11 +243,12 @@ mod unwind;
 
 mod arch;
 mod coroutine;
+mod sanitizer;
 pub mod stack;
 pub mod trap;
 mod util;
 
-pub use coroutine::*;
+pub use coroutine::{on_stack, Coroutine, CoroutineResult, Yielder};
 
 #[cfg(test)]
 mod tests;

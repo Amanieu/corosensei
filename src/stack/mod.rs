@@ -6,6 +6,8 @@
 
 use core::num::NonZeroUsize;
 
+use crate::sanitizer::SanitizerFiber;
+
 pub mod valgrind;
 
 cfg_if::cfg_if! {
@@ -64,6 +66,18 @@ pub unsafe trait Stack {
     /// executing code on the stack.
     #[cfg(windows)]
     fn update_teb_fields(&mut self, stack_limit: usize, guaranteed_stack_bytes: usize);
+
+    /// Internal method to obtain the stack bounds for sanitizer runtime.
+    #[doc(hidden)]
+    #[inline]
+    fn sanitizer_fiber(&self) -> SanitizerFiber {
+        SanitizerFiber {
+            #[cfg(feature = "sanitizer")]
+            bottom: self.limit().get() as *const u8,
+            #[cfg(feature = "sanitizer")]
+            size: self.base().get() - self.limit().get(),
+        }
+    }
 }
 
 /// Fields in the Thread Environment Block (TEB) which must be updated when

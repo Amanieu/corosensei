@@ -5,6 +5,7 @@ use core::mem::{self, ManuallyDrop};
 use core::ptr;
 
 use crate::arch::{self, STACK_ALIGNMENT};
+use crate::sanitizer::SanitizerFiber;
 #[cfg(feature = "default-stack")]
 use crate::stack::DefaultStack;
 #[cfg(windows)]
@@ -40,6 +41,14 @@ impl<Yield, Return> CoroutineResult<Yield, Return> {
             CoroutineResult::Return(val) => Some(val),
         }
     }
+}
+
+/// When using sanitizers, we need to stash the bounds of the parent stack at a
+/// fixed offset from the parent link so that we can inform the sanitizer
+/// runtime of any stack switches.
+#[inline]
+pub(crate) fn adjusted_stack_base(stack: &impl stack::Stack) -> StackPointer {
+    unsafe { StackPointer::new_unchecked(stack.base().get() - mem::size_of::<SanitizerFiber>()) }
 }
 
 /// A coroutine wraps a closure and allows suspending its execution more than
@@ -82,6 +91,12 @@ pub struct Coroutine<Input, Yield, Return, Stack: stack::Stack = DefaultStack> {
     // Function to call to drop the initial state of a coroutine if it has
     // never been resumed.
     drop_fn: unsafe fn(ptr: *mut u8),
+
+    // Data used by sanitizers for tracking stack bounds.
+    //
+    // This is not necessarily the same as `stack.sanitizer_fiber()` if the
+    // coroutine has made further stack switches.
+    sanitizer_fiber: SanitizerFiber,
 
     // We want to be covariant over Yield and Return, and contravariant
     // over Input.
@@ -126,6 +141,7 @@ pub struct Coroutine<Input, Yield, Return, Stack: stack::Stack> {
     stack_ptr: Option<StackPointer>,
     initial_stack_ptr: StackPointer,
     drop_fn: unsafe fn(ptr: *mut u8),
+    sanitizer_fiber: SanitizerFiber,
     marker: PhantomData<fn(Input) -> CoroutineResult<Yield, Return>>,
     marker2: PhantomData<*mut ()>,
 }
@@ -185,6 +201,13 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
                 // parent link on the stack.
                 let yielder = &*(parent_link as *mut StackPointer as *const Yielder<Input, Yield>);
 
+                // If using sanitizers, store the parent's stack bounds at a
+                // fixed offset from the parent link.
+                unsafe {
+                    *SanitizerFiber::from_parent_link(parent_link) =
+                        SanitizerFiber::finish_switch(ptr::null_mut());
+                }
+
                 // Read the function from the stack.
                 debug_assert_eq!(func as usize % mem::align_of::<F>(), 0);
                 let f = func.read();
@@ -201,7 +224,12 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
                 };
 
                 // Run the body of the generator, catching any panics.
-                let result = unwind::catch_unwind_at_root(|| f(yielder, input));
+                let result = unwind::catch_unwind_at_root(|| f(&yielder, input));
+
+                // If using sanitizers, restore the parent's stack bounds.
+                unsafe {
+                    (*SanitizerFiber::from_parent_link(parent_link)).start_switch();
+                }
 
                 // Return any caught panics to the parent context.
                 let mut result = ManuallyDrop::new(result);
@@ -219,12 +247,13 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
             // coroutine_func. Write the given function object to the stack so
             // its address is passed to coroutine_func on the first resume.
             let stack_ptr = arch::init_stack(&stack, coroutine_func::<Input, Yield, Return, F>, f);
-
+            let sanitizer_fiber = stack.sanitizer_fiber();
             Self {
                 stack,
                 stack_ptr: Some(stack_ptr),
                 initial_stack_ptr: stack_ptr,
                 drop_fn: drop_fn::<F>,
+                sanitizer_fiber,
                 marker: PhantomData,
                 marker2: PhantomData,
             }
@@ -275,10 +304,17 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
         // switch_and_link unwinds.
         self.stack_ptr = None;
 
+        let fake_stack = self.sanitizer_fiber.start_switch();
+
         let mut input = ManuallyDrop::new(input);
-        let (result, stack_ptr) =
-            arch::switch_and_link(util::encode_val(&mut input), stack_ptr, self.stack.base());
+        let (result, stack_ptr) = arch::switch_and_link(
+            util::encode_val(&mut input),
+            stack_ptr,
+            adjusted_stack_base(&self.stack),
+        );
         self.stack_ptr = stack_ptr;
+
+        self.sanitizer_fiber = SanitizerFiber::finish_switch(fake_stack);
 
         // Decode the returned value depending on whether the coroutine
         // terminated.
@@ -316,7 +352,7 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
         #[cfg(windows)]
         if let Some(stack_ptr) = self.stack_ptr {
             if self.started() {
-                arch::reset_teb_fields_from_suspended(self.stack.base(), stack_ptr);
+                arch::reset_teb_fields_from_suspended(adjusted_stack_base(&self.stack), stack_ptr);
             }
         }
         self.stack_ptr = None;
@@ -355,7 +391,7 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
         // initial object.
         if !self.started() {
             unsafe {
-                arch::drop_initial_obj(self.stack.base(), stack_ptr, self.drop_fn);
+                arch::drop_initial_obj(adjusted_stack_base(&self.stack), stack_ptr, self.drop_fn);
             }
             self.stack_ptr = None;
             return;
@@ -414,7 +450,7 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
         self.stack_ptr = None;
 
         let (result, stack_ptr) =
-            arch::switch_and_throw(forced_unwind, stack_ptr, self.stack.base());
+            arch::switch_and_throw(forced_unwind, stack_ptr, adjusted_stack_base(&self.stack));
         self.stack_ptr = stack_ptr;
 
         // Decode the returned value depending on whether the coroutine
@@ -435,6 +471,11 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
             self.done(),
             "cannot extract stack from an incomplete coroutine"
         );
+
+        // Clear any ASAN poisoning on the stack before it gets re-used.
+        unsafe {
+            self.stack.sanitizer_fiber().unpoison_stack();
+        }
 
         #[cfg(windows)]
         unsafe {
@@ -461,7 +502,7 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
     /// safety requirements.
     pub fn trap_handler(&self) -> CoroutineTrapHandler<Return> {
         CoroutineTrapHandler {
-            stack_base: self.stack.base(),
+            stack_base: adjusted_stack_base(&self.stack),
             stack_limit: self.stack.limit(),
             marker: PhantomData,
         }
@@ -477,6 +518,11 @@ impl<Input, Yield, Return, Stack: stack::Stack> Drop for Coroutine<Input, Yield,
         });
         self.force_unwind();
         mem::forget(guard);
+
+        // Clear any ASAN poisoning on the stack before it gets re-used.
+        unsafe {
+            self.stack.sanitizer_fiber().unpoison_stack();
+        }
 
         #[cfg(windows)]
         unsafe {
@@ -506,8 +552,19 @@ impl<Input, Yield> Yielder<Input, Yield> {
     /// [`Coroutine::resume`] function is called again.
     pub fn suspend(&self, val: Yield) -> Input {
         unsafe {
+            let parent_link = self as *const Self as *mut StackPointer;
+
+            // The parent's stack bounds are kept at a fixed offset from the
+            // parent link. These are used by the sanitizer runtime.
+            let sanitizer_fiber = &mut *SanitizerFiber::from_parent_link(parent_link);
+            let fake_stack = sanitizer_fiber.start_switch();
+
             let mut val = ManuallyDrop::new(val);
             let result = arch::switch_yield(util::encode_val(&mut val), self.stack_ptr.as_ptr());
+
+            // Save the parent's possibly updated stack bounds after the switch.
+            *sanitizer_fiber = SanitizerFiber::finish_switch(fake_stack);
+
             unwind::maybe_force_unwind(util::decode_val(result))
         }
     }
@@ -533,11 +590,13 @@ impl<Input, Yield> Yielder<Input, Yield> {
     {
         // Get the top of the parent stack.
         let stack_ptr = unsafe {
-            StackPointer::new_unchecked(self.stack_ptr.get().get() - arch::PARENT_LINK_OFFSET)
+            StackPointer::new_unchecked(self.stack_ptr.get().get() - arch::PARENT_STACK_OFFSET)
         };
 
         // Create a virtual stack that starts below the parent stack.
-        let stack = unsafe { ParentStack::new(stack_ptr) };
+        let parent_link = self as *const Self as *mut StackPointer;
+        let sanitizer_fiber = unsafe { *SanitizerFiber::from_parent_link(parent_link) };
+        let stack = unsafe { ParentStack::new(stack_ptr, sanitizer_fiber) };
 
         on_stack(stack, f)
     }
@@ -567,6 +626,8 @@ where
         where
             F: FnOnce() -> R,
         {
+            let sanitizer_fiber = SanitizerFiber::finish_switch(ptr::null_mut());
+
             // Read the function out of the union.
             let data = &mut *(ptr as *mut FuncOrResult<F, R>);
             let func = ManuallyDrop::take(&mut data.func);
@@ -576,6 +637,8 @@ where
 
             // And write the result back to the union.
             data.result = ManuallyDrop::new(result);
+
+            sanitizer_fiber.start_switch();
         }
     }
 
@@ -584,8 +647,13 @@ where
             func: ManuallyDrop::new(f),
         };
 
+        let sanitizer_fiber = stack.sanitizer_fiber();
+        let fake_stack = sanitizer_fiber.start_switch();
+
         // Call the wrapper function on the new stack.
         arch::on_stack(&mut data as *mut _ as *mut u8, stack, wrapper::<F, R>);
+
+        SanitizerFiber::finish_switch(fake_stack);
 
         // Re-throw any panics if one was caught.
         unwind::maybe_resume_unwind(ManuallyDrop::take(&mut data.result))
@@ -605,16 +673,21 @@ struct ParentStack {
     /// stack.
     #[cfg(windows)]
     stack_ptr: StackPointer,
+
+    /// The parent stack's bounds as tracked by the sanitizer runtime. This may
+    /// differ from `stack_base`/`stack_ptr``.
+    sanitizer_fiber: SanitizerFiber,
 }
 
 impl ParentStack {
     #[inline]
-    unsafe fn new(stack_ptr: StackPointer) -> Self {
+    unsafe fn new(stack_ptr: StackPointer, sanitizer_fiber: SanitizerFiber) -> Self {
         let stack_base = StackPointer::new_unchecked(stack_ptr.get() & !(STACK_ALIGNMENT - 1));
         Self {
             stack_base,
             #[cfg(windows)]
             stack_ptr,
+            sanitizer_fiber,
         }
     }
 }
@@ -649,5 +722,10 @@ unsafe impl stack::Stack for ParentStack {
                 guaranteed_stack_bytes,
             );
         }
+    }
+
+    #[inline]
+    fn sanitizer_fiber(&self) -> SanitizerFiber {
+        self.sanitizer_fiber
     }
 }

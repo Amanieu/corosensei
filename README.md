@@ -80,12 +80,12 @@ This crate currently supports the following targets:
 
 |             | ELF (Linux, BSD, bare metal, etc) | Darwin (macOS, iOS, etc) | Windows |
 | ----------- | --------------------------------- | ------------------------ | ------- |
-| x86_64      | ✅                                | ✅                       | ✅      |
-| x86         | ✅                                | ❌                       | ⚠️*      |
-| AArch64     | ✅                                | ✅                       | ❌      |
-| ARM         | ✅                                | ❌                       | ❌      |
-| RISC-V      | ✅                                | ❌                       | ❌      |
-| LoongArch64 | ✅                                | ❌                       | ❌      |
+| x86_64      | ✅                                 | ✅                        | ✅       |
+| x86         | ✅                                 | ❌                        | ⚠️*      |
+| AArch64     | ✅                                 | ✅                        | ❌       |
+| ARM         | ✅                                 | ❌                        | ❌       |
+| RISC-V      | ✅                                 | ❌                        | ❌       |
+| LoongArch64 | ✅                                 | ❌                        | ❌       |
 
 \* Linked backtraces are not supported on x86 Windows.
 
@@ -240,6 +240,14 @@ Requires `std`.
 This feature uses the `asm_unwind` nightly feature to allow panics to unwind directly through the inline assembly used in this crate, which can improve performance since it doesn't need to be passed across stack boundaries as a `Result`.
 
 Implies `unwind`.
+
+#### `sanitizer`
+
+This feature adds support for [sanitizers] like ASAN which helps detect bugs in unsafe code. Crates like `corosensei` which perform stack switching need to inform the sanitizer runtime of these stack switches to avoid false positive errors and/or crashes while running with sanitizers enabled.
+
+This feature should not be enabled when not running with sanitizers since it will result in linker errors due to the dependency on the sanitizer runtime API.
+
+[sanitizers]: https://doc.rust-lang.org/unstable-book/compiler-flags/sanitizer.html
 
 ## Performance
 
