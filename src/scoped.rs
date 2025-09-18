@@ -1,9 +1,10 @@
+use crate::stack;
 #[cfg(feature = "default-stack")]
 use crate::stack::DefaultStack;
-use crate::Yielder;
-use crate::{stack, trap::CoroutineTrapHandler};
-use crate::{Coroutine, CoroutineResult};
-use core::pin::Pin;
+use crate::trap::CoroutineTrapHandler;
+use crate::{Coroutine, CoroutineResult, Yielder};
+use core::marker::PhantomPinned;
+use core::pin::{pin, Pin};
 
 /// Variant of [`Coroutine`] which allows the use of non-`'static` lifetimes.
 ///
@@ -12,14 +13,46 @@ use core::pin::Pin;
 /// - Lifetimes in `Input`, `Yield` and `Return`,
 /// - Borrowed values in the coroutine body closure.
 ///
-/// However this requires that the coroutine itself be pinned to ensure that it
-/// is properly dropped before any of these lifetimes end. The easiest way to
-/// do so it to use the [`pin!`] macro when constructing the coroutine
+/// To ensure safety, this requires that the coroutine only be accessed within
+/// a scope, at the end of which it is dropped. Within the scope, a pinned
+/// reference to a `ScopedCoroutine` is provided, which mirrors the API of
+/// `Coroutine`.
 ///
-/// [`pin!`]: core::pin::pin
+/// # Example
+///
+/// ```
+/// use corosensei::{ScopedCoroutine, Yielder};
+///
+/// let mut counter = 0;
+/// let body = |yielder: &Yielder<i32, ()>, input| {
+///     if input == 0 {
+///         return;
+///     }
+///     counter += input;
+///     loop {
+///         let input = yielder.suspend(());
+///         if input == 0 {
+///             break;
+///         }
+///         counter += input;
+///     }
+/// };
+/// ScopedCoroutine::new(
+///     body,
+///     |mut coroutine| {
+///         coroutine.as_mut().resume(1);
+///         coroutine.as_mut().resume(2);
+///         coroutine.as_mut().resume(3);
+///         coroutine.as_mut().resume(4);
+///         coroutine.as_mut().resume(5);
+///     }
+/// );
+/// assert_eq!(counter, 15);
+/// ```
 #[cfg(not(feature = "default-stack"))]
 pub struct ScopedCoroutine<Input, Yield, Return, Stack: stack::Stack> {
     inner: Coroutine<Input, Yield, Return, Stack>,
+    _marker: PhantomPinned,
 }
 
 /// Variant of [`Coroutine`] which allows the use of non-`'static` lifetimes.
@@ -29,46 +62,86 @@ pub struct ScopedCoroutine<Input, Yield, Return, Stack: stack::Stack> {
 /// - Lifetimes in `Input`, `Yield` and `Return`,
 /// - Borrowed values in the coroutine body closure.
 ///
-/// However this requires that the coroutine itself be pinned to ensure that it
-/// is properly dropped before any of these lifetimes end. The easiest way to
-/// do so it to use the [`pin!`] macro when constructing the coroutine
+/// To ensure safety, this requires that the coroutine only be accessed within
+/// a scope, at the end of which it is dropped. Within the scope, a pinned
+/// reference to a `ScopedCoroutine` is provided, which mirrors the API of
+/// `Coroutine`.
 ///
-/// [`pin!`]: core::pin::pin
+/// # Example
+///
+/// ```
+/// use corosensei::{ScopedCoroutine, Yielder};
+///
+/// let mut counter = 0;
+/// let body = |yielder: &Yielder<i32, ()>, input| {
+///     if input == 0 {
+///         return;
+///     }
+///     counter += input;
+///     loop {
+///         let input = yielder.suspend(());
+///         if input == 0 {
+///             break;
+///         }
+///         counter += input;
+///     }
+/// };
+/// ScopedCoroutine::new(
+///     body,
+///     |mut coroutine| {
+///         coroutine.as_mut().resume(1);
+///         coroutine.as_mut().resume(2);
+///         coroutine.as_mut().resume(3);
+///         coroutine.as_mut().resume(4);
+///         coroutine.as_mut().resume(5);
+///     }
+/// );
+/// assert_eq!(counter, 15);
+/// ```
 #[cfg(feature = "default-stack")]
 pub struct ScopedCoroutine<Input, Yield, Return, Stack: stack::Stack = DefaultStack> {
     inner: Coroutine<Input, Yield, Return, Stack>,
+    _marker: PhantomPinned,
 }
 
 #[cfg(feature = "default-stack")]
 impl<Input, Yield, Return> ScopedCoroutine<Input, Yield, Return, DefaultStack> {
-    /// Creates a new coroutine which will execute `func` on a new stack.
+    /// Creates a new coroutine which will execute `func` on the given stack.
     ///
-    /// This function returns a `ScopedCoroutine` which, when resumed, will
-    /// execute `func` to completion. When desired the `func` can suspend
-    /// itself via `Yielder::suspend`.
-    pub fn new<F>(f: F) -> Self
+    /// This function creates a coroutine which, when resumed, will execute
+    /// `body` to completion. When desired the `func` can suspend itself via
+    /// [`Yielder::suspend`].
+    ///
+    /// The coroutine is passed as a `Pin<&mut ScopedCoroutine>` to `scope` and
+    /// dropped at the end of the scope.
+    pub fn new<F, S, T>(body: F, scope: S) -> T
     where
         F: FnOnce(&Yielder<Input, Yield>, Input) -> Return,
+        S: FnOnce(Pin<&mut Self>) -> T,
     {
-        Self::with_stack(Default::default(), f)
+        Self::with_stack(Default::default(), body, scope)
     }
 }
 
 impl<Input, Yield, Return, Stack: stack::Stack> ScopedCoroutine<Input, Yield, Return, Stack> {
     /// Creates a new coroutine which will execute `func` on the given stack.
     ///
-    /// This function returns a coroutine which, when resumed, will execute
-    /// `func` to completion. When desired the `func` can suspend itself via
+    /// This function creates a coroutine which, when resumed, will execute
+    /// `body` to completion. When desired the `func` can suspend itself via
     /// [`Yielder::suspend`].
-    pub fn with_stack<F>(stack: Stack, f: F) -> Self
+    ///
+    /// The coroutine is passed as a `Pin<&mut ScopedCoroutine>` to `scope` and
+    /// dropped at the end of the scope.
+    pub fn with_stack<F, S, T>(stack: Stack, body: F, scope: S) -> T
     where
         F: FnOnce(&Yielder<Input, Yield>, Input) -> Return,
+        S: FnOnce(Pin<&mut Self>) -> T,
     {
-        unsafe {
-            Self {
-                inner: Coroutine::with_stack_unchecked(stack, f),
-            }
-        }
+        let coroutine = pin!(Self {
+            inner: unsafe { Coroutine::with_stack_unchecked(stack, body) },
+            _marker: PhantomPinned,
+        });
+        scope(coroutine)
     }
 
     /// Resumes execution of this coroutine.
