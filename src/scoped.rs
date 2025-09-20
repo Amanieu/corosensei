@@ -3,8 +3,6 @@ use crate::stack;
 use crate::stack::DefaultStack;
 use crate::trap::CoroutineTrapHandler;
 use crate::{Coroutine, CoroutineResult, Yielder};
-use core::marker::PhantomPinned;
-use core::pin::{pin, Pin};
 
 /// Variant of [`Coroutine`] which allows the use of non-`'static` lifetimes.
 ///
@@ -14,8 +12,8 @@ use core::pin::{pin, Pin};
 /// - Borrowed values in the coroutine body closure.
 ///
 /// To ensure safety, this requires that the coroutine only be accessed within
-/// a scope, at the end of which it is dropped. Within the scope, a pinned
-/// reference to a `ScopedCoroutine` is provided, which mirrors the API of
+/// a scope, at the end of which it is dropped. Within the scope, a
+/// [`ScopedCoroutineRef`] is provided, which mirrors the API of
 /// `Coroutine`.
 ///
 /// # Example
@@ -24,7 +22,7 @@ use core::pin::{pin, Pin};
 /// use corosensei::{ScopedCoroutine, Yielder};
 ///
 /// let mut counter = 0;
-/// let body = |yielder: &Yielder<i32, ()>, input| {
+/// let coroutine = ScopedCoroutine::new(|yielder: &Yielder<i32, ()>, input| {
 ///     if input == 0 {
 ///         return;
 ///     }
@@ -36,23 +34,19 @@ use core::pin::{pin, Pin};
 ///         }
 ///         counter += input;
 ///     }
-/// };
-/// ScopedCoroutine::new(
-///     body,
-///     |mut coroutine| {
-///         coroutine.as_mut().resume(1);
-///         coroutine.as_mut().resume(2);
-///         coroutine.as_mut().resume(3);
-///         coroutine.as_mut().resume(4);
-///         coroutine.as_mut().resume(5);
-///     }
-/// );
+/// });
+/// coroutine.scope(|mut coroutine| {
+///     coroutine.as_mut().resume(1);
+///     coroutine.as_mut().resume(2);
+///     coroutine.as_mut().resume(3);
+///     coroutine.as_mut().resume(4);
+///     coroutine.as_mut().resume(5);
+/// });
 /// assert_eq!(counter, 15);
 /// ```
 #[cfg(not(feature = "default-stack"))]
 pub struct ScopedCoroutine<Input, Yield, Return, Stack: stack::Stack> {
     inner: Coroutine<Input, Yield, Return, Stack>,
-    _marker: PhantomPinned,
 }
 
 /// Variant of [`Coroutine`] which allows the use of non-`'static` lifetimes.
@@ -63,17 +57,17 @@ pub struct ScopedCoroutine<Input, Yield, Return, Stack: stack::Stack> {
 /// - Borrowed values in the coroutine body closure.
 ///
 /// To ensure safety, this requires that the coroutine only be accessed within
-/// a scope, at the end of which it is dropped. Within the scope, a pinned
-/// reference to a `ScopedCoroutine` is provided, which mirrors the API of
+/// a scope, at the end of which it is dropped. Within the scope, a
+/// [`ScopedCoroutineRef`] is provided, which mirrors the API of
 /// `Coroutine`.
 ///
 /// # Example
 ///
 /// ```
-/// use corosensei::{ScopedCoroutine, Yielder};
+/// use corosensei::ScopedCoroutine;
 ///
 /// let mut counter = 0;
-/// let body = |yielder: &Yielder<i32, ()>, input| {
+/// let coroutine = ScopedCoroutine::new(|yielder, input| {
 ///     if input == 0 {
 ///         return;
 ///     }
@@ -85,23 +79,19 @@ pub struct ScopedCoroutine<Input, Yield, Return, Stack: stack::Stack> {
 ///         }
 ///         counter += input;
 ///     }
-/// };
-/// ScopedCoroutine::new(
-///     body,
-///     |mut coroutine| {
-///         coroutine.as_mut().resume(1);
-///         coroutine.as_mut().resume(2);
-///         coroutine.as_mut().resume(3);
-///         coroutine.as_mut().resume(4);
-///         coroutine.as_mut().resume(5);
-///     }
-/// );
+/// });
+/// coroutine.scope(|mut coroutine| {
+///     coroutine.as_mut().resume(1);
+///     coroutine.as_mut().resume(2);
+///     coroutine.as_mut().resume(3);
+///     coroutine.as_mut().resume(4);
+///     coroutine.as_mut().resume(5);
+/// });
 /// assert_eq!(counter, 15);
 /// ```
 #[cfg(feature = "default-stack")]
 pub struct ScopedCoroutine<Input, Yield, Return, Stack: stack::Stack = DefaultStack> {
     inner: Coroutine<Input, Yield, Return, Stack>,
-    _marker: PhantomPinned,
 }
 
 #[cfg(feature = "default-stack")]
@@ -111,15 +101,11 @@ impl<Input, Yield, Return> ScopedCoroutine<Input, Yield, Return, DefaultStack> {
     /// This function creates a coroutine which, when resumed, will execute
     /// `body` to completion. When desired the `func` can suspend itself via
     /// [`Yielder::suspend`].
-    ///
-    /// The coroutine is passed as a `Pin<&mut ScopedCoroutine>` to `scope` and
-    /// dropped at the end of the scope.
-    pub fn new<F, S, T>(body: F, scope: S) -> T
+    pub fn new<F>(func: F) -> Self
     where
         F: FnOnce(&Yielder<Input, Yield>, Input) -> Return,
-        S: FnOnce(Pin<&mut Self>) -> T,
     {
-        Self::with_stack(Default::default(), body, scope)
+        Self::with_stack(Default::default(), func)
     }
 }
 
@@ -129,19 +115,59 @@ impl<Input, Yield, Return, Stack: stack::Stack> ScopedCoroutine<Input, Yield, Re
     /// This function creates a coroutine which, when resumed, will execute
     /// `body` to completion. When desired the `func` can suspend itself via
     /// [`Yielder::suspend`].
-    ///
-    /// The coroutine is passed as a `Pin<&mut ScopedCoroutine>` to `scope` and
-    /// dropped at the end of the scope.
-    pub fn with_stack<F, S, T>(stack: Stack, body: F, scope: S) -> T
+    pub fn with_stack<F>(stack: Stack, func: F) -> Self
     where
         F: FnOnce(&Yielder<Input, Yield>, Input) -> Return,
-        S: FnOnce(Pin<&mut Self>) -> T,
     {
-        let coroutine = pin!(Self {
-            inner: unsafe { Coroutine::with_stack_unchecked(stack, body) },
-            _marker: PhantomPinned,
-        });
-        scope(coroutine)
+        Self {
+            inner: unsafe { Coroutine::with_stack_unchecked(stack, func) },
+        }
+    }
+
+    /// Extracts the stack from a coroutine that has finished executing.
+    ///
+    /// This allows the stack to be re-used for another coroutine.
+    pub fn into_stack(self) -> Stack {
+        self.inner.into_stack()
+    }
+
+    /// Creates a scope in which the coroutine can be executed.
+    ///
+    /// This ensure that any lifetimes used by the coroutine do not escape the
+    /// scope and that the coroutine is dropped at the end of the scope.
+    pub fn scope<F, T>(mut self, f: F) -> T
+    where
+        F: FnOnce(ScopedCoroutineRef<'_, Input, Yield, Return, Stack>) -> T,
+    {
+        let coroutine = ScopedCoroutineRef {
+            inner: &mut self.inner,
+        };
+        f(coroutine)
+    }
+}
+
+/// Reference to a coroutine within a scope created by
+/// [`ScopedCoroutine::scope`].
+///
+/// Note that, unlike normal mutable references, Rust will not automatically
+/// re-borrow this type so you may need to use the
+/// [`ScopedCoroutineRef::as_mut`] method when invoking methods that take a
+/// mutable reference.
+pub struct ScopedCoroutineRef<'a, Input, Yield, Return, Stack: stack::Stack> {
+    inner: &'a mut Coroutine<Input, Yield, Return, Stack>,
+}
+
+impl<Input, Yield, Return, Stack: stack::Stack>
+    ScopedCoroutineRef<'_, Input, Yield, Return, Stack>
+{
+    /// Reborrows the `ScopedCoroutineRef`.
+    ///
+    /// This is useful when the reference needs to be used multiple times.
+    ///
+    /// This is necessary before Rust only supports automatic reborrowing for
+    /// plain mutable references.
+    pub fn as_mut(&mut self) -> ScopedCoroutineRef<'_, Input, Yield, Return, Stack> {
+        ScopedCoroutineRef { inner: self.inner }
     }
 
     /// Resumes execution of this coroutine.
@@ -161,8 +187,8 @@ impl<Input, Yield, Return, Stack: stack::Stack> ScopedCoroutine<Input, Yield, Re
     ///
     /// If the coroutine itself panics during execution then the panic will be
     /// propagated to this caller.
-    pub fn resume(self: Pin<&mut Self>, val: Input) -> CoroutineResult<Yield, Return> {
-        unsafe { self.get_unchecked_mut().inner.resume(val) }
+    pub fn resume(&mut self, val: Input) -> CoroutineResult<Yield, Return> {
+        self.inner.resume(val)
     }
 
     /// Returns whether this coroutine has been resumed at least once.
@@ -188,8 +214,8 @@ impl<Input, Yield, Return, Stack: stack::Stack> ScopedCoroutine<Input, Yield, Re
     ///
     /// This can only be done safely if there are no objects currently on the
     /// coroutine's stack that need to execute `Drop` code.
-    pub unsafe fn force_reset(self: Pin<&mut Self>) {
-        unsafe { self.get_unchecked_mut().inner.force_reset() }
+    pub unsafe fn force_reset(&mut self) {
+        self.inner.force_reset()
     }
 
     /// Unwinds the coroutine stack, dropping any live objects that are
@@ -210,15 +236,8 @@ impl<Input, Yield, Return, Stack: stack::Stack> ScopedCoroutine<Input, Yield, Re
     ///   rethrown.
     /// - This crate was compiled without the `unwind` feature and the
     ///   coroutine is currently suspended in the yielder (`started && !done`).
-    pub fn force_unwind(self: Pin<&mut Self>) {
-        unsafe { self.get_unchecked_mut().inner.force_unwind() }
-    }
-
-    /// Extracts the stack from a coroutine that has finished executing.
-    ///
-    /// This allows the stack to be re-used for another coroutine.
-    pub fn into_stack(self) -> Stack {
-        self.inner.into_stack()
+    pub fn force_unwind(&mut self) {
+        self.inner.force_unwind()
     }
 
     /// Returns a [`CoroutineTrapHandler`] which can be used to handle traps that

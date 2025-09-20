@@ -159,7 +159,7 @@ impl<Input, Yield, Return> Coroutine<Input, Yield, Return, DefaultStack> {
     /// This function returns a `Coroutine` which, when resumed, will execute
     /// `func` to completion. When desired the `func` can suspend itself via
     /// `Yielder::suspend`.
-    pub fn new<F>(f: F) -> Self
+    pub fn new<F>(func: F) -> Self
     where
         F: FnOnce(&Yielder<Input, Yield>, Input) -> Return,
         F: 'static,
@@ -167,7 +167,7 @@ impl<Input, Yield, Return> Coroutine<Input, Yield, Return, DefaultStack> {
         Yield: 'static,
         Return: 'static,
     {
-        Self::with_stack(Default::default(), f)
+        Self::with_stack(Default::default(), func)
     }
 }
 
@@ -177,7 +177,7 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
     /// This function returns a coroutine which, when resumed, will execute
     /// `func` to completion. When desired the `func` can suspend itself via
     /// [`Yielder::suspend`].
-    pub fn with_stack<F>(stack: Stack, f: F) -> Self
+    pub fn with_stack<F>(stack: Stack, func: F) -> Self
     where
         F: FnOnce(&Yielder<Input, Yield>, Input) -> Return,
         F: 'static,
@@ -186,12 +186,12 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
         Return: 'static,
         Stack: 'static,
     {
-        unsafe { Self::with_stack_unchecked(stack, f) }
+        unsafe { Self::with_stack_unchecked(stack, func) }
     }
 
     /// Unsafe version of [`Coroutine::with_stack`] without `'static` bounds.
     /// This is used by `ScopedCoroutine`.
-    pub(crate) unsafe fn with_stack_unchecked<F>(stack: Stack, f: F) -> Self
+    pub(crate) unsafe fn with_stack_unchecked<F>(stack: Stack, func: F) -> Self
     where
         F: FnOnce(&Yielder<Input, Yield>, Input) -> Return,
     {
@@ -255,7 +255,8 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
             // Set up the stack so that the coroutine starts executing
             // coroutine_func. Write the given function object to the stack so
             // its address is passed to coroutine_func on the first resume.
-            let stack_ptr = arch::init_stack(&stack, coroutine_func::<Input, Yield, Return, F>, f);
+            let stack_ptr =
+                arch::init_stack(&stack, coroutine_func::<Input, Yield, Return, F>, func);
             let sanitizer_fiber = stack.sanitizer_fiber();
             Self {
                 stack,

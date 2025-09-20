@@ -23,11 +23,11 @@ fn coroutine_call<M: Measurement + 'static>(name: &str, c: &mut Criterion<M>) {
 
     c.bench_function(name, move |b| {
         b.iter(|| {
-            ScopedCoroutine::<usize, (), usize, _>::with_stack(
+            let coroutine = ScopedCoroutine::<usize, (), usize, _>::with_stack(
                 &mut stack,
                 |_yielder, input| input,
-                |identity| identity.resume(black_box(0usize)),
             );
+            coroutine.scope(|mut identity| identity.resume(black_box(0usize)));
         });
     });
 }
