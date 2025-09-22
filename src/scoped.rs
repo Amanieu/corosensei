@@ -1,3 +1,5 @@
+use core::marker::PhantomData;
+
 use crate::stack;
 #[cfg(feature = "default-stack")]
 use crate::stack::DefaultStack;
@@ -45,8 +47,10 @@ use crate::{Coroutine, CoroutineResult, Yielder};
 /// assert_eq!(counter, 15);
 /// ```
 #[cfg(not(feature = "default-stack"))]
-pub struct ScopedCoroutine<Input, Yield, Return, Stack: stack::Stack> {
+pub struct ScopedCoroutine<'a, Input, Yield, Return, Stack: stack::Stack> {
     inner: Coroutine<Input, Yield, Return, Stack>,
+    // Ensure any borrows in the coroutine body outlive the ScopedCoroutine.
+    marker: PhantomData<&'a mut ()>,
 }
 
 /// Variant of [`Coroutine`] which allows the use of non-`'static` lifetimes.
@@ -90,18 +94,20 @@ pub struct ScopedCoroutine<Input, Yield, Return, Stack: stack::Stack> {
 /// assert_eq!(counter, 15);
 /// ```
 #[cfg(feature = "default-stack")]
-pub struct ScopedCoroutine<Input, Yield, Return, Stack: stack::Stack = DefaultStack> {
+pub struct ScopedCoroutine<'a, Input, Yield, Return, Stack: stack::Stack = DefaultStack> {
     inner: Coroutine<Input, Yield, Return, Stack>,
+    // Ensure any borrows in the coroutine body outlive the ScopedCoroutine.
+    marker: PhantomData<&'a mut ()>,
 }
 
 #[cfg(feature = "default-stack")]
-impl<Input, Yield, Return> ScopedCoroutine<Input, Yield, Return, DefaultStack> {
+impl<'a, Input, Yield, Return> ScopedCoroutine<'a, Input, Yield, Return, DefaultStack> {
     /// Creates a new coroutine which will execute `func` on the given stack.
     ///
     /// This function creates a coroutine which, when resumed, will execute
     /// `body` to completion. When desired the `func` can suspend itself via
     /// [`Yielder::suspend`].
-    pub fn new<F>(func: F) -> Self
+    pub fn new<F: 'a>(func: F) -> Self
     where
         F: FnOnce(&Yielder<Input, Yield>, Input) -> Return,
     {
@@ -109,18 +115,21 @@ impl<Input, Yield, Return> ScopedCoroutine<Input, Yield, Return, DefaultStack> {
     }
 }
 
-impl<Input, Yield, Return, Stack: stack::Stack> ScopedCoroutine<Input, Yield, Return, Stack> {
+impl<'a, Input, Yield, Return, Stack: stack::Stack>
+    ScopedCoroutine<'a, Input, Yield, Return, Stack>
+{
     /// Creates a new coroutine which will execute `func` on the given stack.
     ///
     /// This function creates a coroutine which, when resumed, will execute
     /// `body` to completion. When desired the `func` can suspend itself via
     /// [`Yielder::suspend`].
-    pub fn with_stack<F>(stack: Stack, func: F) -> Self
+    pub fn with_stack<F: 'a>(stack: Stack, func: F) -> Self
     where
         F: FnOnce(&Yielder<Input, Yield>, Input) -> Return,
     {
         Self {
             inner: unsafe { Coroutine::with_stack_unchecked(stack, func) },
+            marker: PhantomData,
         }
     }
 
