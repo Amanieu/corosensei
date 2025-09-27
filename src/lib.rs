@@ -250,7 +250,7 @@ pub mod trap;
 mod util;
 
 pub use coroutine::{on_stack, Coroutine, CoroutineResult, Yielder};
-pub use scoped::ScopedCoroutine;
+pub use scoped::{ScopedCoroutine, ScopedCoroutineRef};
 
 #[cfg(test)]
 mod tests;

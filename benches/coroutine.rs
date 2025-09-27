@@ -1,5 +1,3 @@
-use core::pin::pin;
-
 use corosensei::stack::DefaultStack;
 use corosensei::{on_stack, Coroutine, ScopedCoroutine};
 use criterion::measurement::Measurement;
@@ -25,12 +23,12 @@ fn coroutine_call<M: Measurement + 'static>(name: &str, c: &mut Criterion<M>) {
 
     c.bench_function(name, move |b| {
         b.iter(|| {
-            let identity = pin!(ScopedCoroutine::<usize, (), usize, _>::with_stack(
+            let coroutine = ScopedCoroutine::<usize, (), usize, _>::with_stack(
                 &mut stack,
-                |_yielder, input| input
-            ));
-            identity.resume(black_box(0usize));
-        })
+                |_yielder, input| input,
+            );
+            coroutine.scope(|mut identity| identity.resume(black_box(0usize)));
+        });
     });
 }
 
