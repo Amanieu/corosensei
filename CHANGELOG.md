@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3](https://github.com/Amanieu/corosensei/compare/v0.2.2...v0.2.3) - 2025-09-27
+
+### Other
+
+- Ensure borrows in the coroutine body outlive the `ScopedCoroutine`
+- Rework the API for scoped coroutines
+- Rework `ScopedCoroutine` by using a scope in addition to `Pin`
+- Re-introduce `ScopedCoroutine` by using `Pin`
+- Merge pull request #54 from Amanieu/sanitizer
+- Merge pull request #44 from zetanumbers/static_stack
+- Use a local label to refer to `stack_init_trampoline_return` in asm
+
 ## [0.2.2](https://github.com/Amanieu/corosensei/compare/v0.2.1...v0.2.2) - 2025-05-27
 
 - Fixed mutable TEB fields not being updated when `force_reset` is called. (#48)
