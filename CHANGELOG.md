@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/Amanieu/corosensei/compare/v0.2.2...v0.3.0) - 2025-09-27
+
+- Re-introduce `ScopedCoroutine` (#58, #60)
+- Add support for running with sanitizers (#54)
+- Require `Coroutine` stack to be `'static` (#44)
+- Fixed linker errors related `stack_init_trampoline_return` (#55)
+
 ## [0.2.2](https://github.com/Amanieu/corosensei/compare/v0.2.1...v0.2.2) - 2025-05-27
 
 - Fixed mutable TEB fields not being updated when `force_reset` is called. (#48)
