@@ -226,6 +226,55 @@ fn force_unwind() {
         assert!(b.load(Ordering::Relaxed));
     }
 
+    #[cfg(feature = "unwind")]
+    {
+        use std::panic::{self, AssertUnwindSafe};
+
+        let a = Arc::new(AtomicBool::new(false));
+        let b = Arc::new(AtomicBool::new(false));
+        let a_drop = SetOnDrop(a.clone());
+        let b_drop = SetOnDrop(b.clone());
+        let mut coroutine = Coroutine::<(), (), (), _>::new(move |y, ()| {
+            drop(a_drop);
+            _ = panic::catch_unwind(AssertUnwindSafe(|| y.suspend(())));
+            drop(b_drop);
+        });
+        coroutine.resume(());
+        assert!(coroutine.started());
+        assert!(!coroutine.done());
+        coroutine.force_unwind();
+        assert!(coroutine.started());
+        assert!(coroutine.done());
+        drop(coroutine);
+        assert!(a.load(Ordering::Relaxed));
+        assert!(b.load(Ordering::Relaxed));
+    }
+
+    #[cfg(feature = "unwind")]
+    {
+        use std::panic::{self, AssertUnwindSafe};
+
+        let a = Arc::new(AtomicBool::new(false));
+        let b = Arc::new(AtomicBool::new(false));
+        let a_drop = SetOnDrop(a.clone());
+        let b_drop = SetOnDrop(b.clone());
+        let mut coroutine = Coroutine::<(), (), (), _>::new(move |y, ()| {
+            drop(a_drop);
+            _ = panic::catch_unwind(AssertUnwindSafe(|| y.suspend(())));
+            y.suspend(());
+            drop(b_drop);
+        });
+        coroutine.resume(());
+        assert!(coroutine.started());
+        assert!(!coroutine.done());
+        coroutine.force_unwind();
+        assert!(coroutine.started());
+        assert!(coroutine.done());
+        drop(coroutine);
+        assert!(a.load(Ordering::Relaxed));
+        assert!(b.load(Ordering::Relaxed));
+    }
+
     let a = Arc::new(AtomicBool::new(false));
     let b = Arc::new(AtomicBool::new(false));
     let a_drop = SetOnDrop(a.clone());

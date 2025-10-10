@@ -374,18 +374,22 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
     ///
     /// If the coroutine has already completed then this function is a no-op.
     ///
+    /// # Unwinding
+    ///
     /// If the coroutine is currently suspended on a `Yielder::suspend` call
     /// then unwinding it requires the `unwind` feature to be enabled and
     /// for the crate to be compiled with `-C panic=unwind`.
     ///
+    /// This method will cause the coroutine to unwind from any
+    /// `Yielder::suspend` using a custom panic payload. Any further attempts
+    /// to suspend the coroutine after this point will cause this process to
+    /// start again until the coroutine has fully unwound or returned from its
+    /// initial function.
+    ///
     /// # Panics
     ///
-    /// This function panics if the coroutine could not be fully unwound. This
-    /// can happen for one of two reasons:
-    /// - The `ForcedUnwind` panic that is used internally was caught and not
-    ///   rethrown.
-    /// - This crate was compiled without the `unwind` feature and the
-    ///   coroutine is currently suspended in the yielder (`started && !done`).
+    /// This function panics if the `unwind` feature is not enabled and the
+    /// coroutine is currently suspended in the yielder (`started && !done`).
     pub fn force_unwind(&mut self) {
         // If the coroutine has already terminated then there is nothing to do.
         if let Some(stack_ptr) = self.stack_ptr {
@@ -396,7 +400,7 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
     /// Slow path of `force_unwind` when the coroutine is known to not have
     /// terminated yet.
     #[cold]
-    fn force_unwind_slow(&mut self, stack_ptr: StackPointer) {
+    fn force_unwind_slow(&mut self, mut stack_ptr: StackPointer) {
         // If the coroutine has not started yet then we just need to drop the
         // initial object.
         if !self.started() {
@@ -407,31 +411,43 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
             return;
         }
 
+        if cfg!(not(feature = "unwind")) {
+            panic!("can't unwind a suspended coroutine without the \"unwind\" feature");
+        }
+
         // If the coroutine is suspended then we need the standard library so
         // that we can unwind the stack. This also requires that the code be
         // compiled with -C panic=unwind.
         #[cfg(feature = "unwind")]
-        {
+        loop {
             extern crate std;
 
-            let forced_unwind = unwind::ForcedUnwind(stack_ptr);
+            let forced_unwind = unwind::ForcedUnwind(self.initial_stack_ptr);
             let result = unwind::catch_forced_unwind(|| {
                 #[cfg(not(feature = "asm-unwind"))]
                 let result = unsafe { self.resume_inner(stack_ptr, Err(forced_unwind)) };
                 #[cfg(feature = "asm-unwind")]
                 let result = unsafe { self.resume_with_exception(stack_ptr, forced_unwind) };
-                match result {
-                    CoroutineResult::Yield(_) | CoroutineResult::Return(Ok(_)) => Ok(()),
-                    #[cfg_attr(feature = "asm-unwind", allow(unreachable_patterns))]
-                    CoroutineResult::Return(Err(e)) => Err(e),
-                }
+                result
             });
 
             match result {
-                Ok(_) => panic!("the ForcedUnwind panic was caught and not rethrown"),
-                Err(e) => {
+                // If the coroutine was suspended, keep trying to unwind it
+                // until we reach the coroutine root.
+                CoroutineResult::Yield(_) => {
+                    stack_ptr = self.stack_ptr.unwrap();
+                    continue;
+                }
+
+                // If the coroutine returned normally, discard the returned
+                // value.
+                CoroutineResult::Return(Ok(_)) => return,
+
+                // If the coroutine exited with an exception, suppress it only
+                // if it is the one we generated.
+                CoroutineResult::Return(Err(e)) => {
                     if let Some(forced_unwind) = e.downcast_ref::<unwind::ForcedUnwind>() {
-                        if forced_unwind.0 == stack_ptr {
+                        if forced_unwind.0 == self.initial_stack_ptr {
                             return;
                         }
                     }
@@ -440,9 +456,6 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
                 }
             }
         }
-
-        #[cfg(not(feature = "unwind"))]
-        panic!("can't unwind a suspended coroutine without the \"unwind\" feature");
     }
 
     /// Variant of `resume_inner` that throws an exception in the context of
