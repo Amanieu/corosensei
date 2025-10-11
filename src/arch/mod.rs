@@ -164,6 +164,9 @@ cfg_if::cfg_if! {
     } else if #[cfg(all(target_arch = "loongarch64", not(windows)))] {
         mod loongarch64;
         pub use self::loongarch64::*;
+    } else if #[cfg(all(target_arch = "powerpc64", not(windows)))] {
+        mod powerpc64;
+        pub use self::powerpc64::*;
     } else {
         compile_error!("Unsupported target");
     }
