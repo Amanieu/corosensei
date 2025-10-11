@@ -15,8 +15,8 @@
 
 #![allow(unused_macros)]
 
-use crate::stack::StackPointer;
 use crate::util::EncodedValue;
+use crate::{stack::StackPointer, CoroutineResult};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "unwind")] {
@@ -206,10 +206,14 @@ cfg_if::cfg_if! {
         }
 
         #[inline]
-        pub fn catch_forced_unwind<T>(
-            f: impl FnOnce() -> Result<T, CaughtPanic>
-        )-> Result<T, Box<dyn Any + Send>> {
-            panic::catch_unwind(AssertUnwindSafe(|| f().unwrap()))
+        pub fn catch_forced_unwind<Yield, Return>(
+            f: impl FnOnce() -> CoroutineResult<Yield, Result<Return, CaughtPanic>>
+        ) -> CoroutineResult<Yield, Result<Return, Box<dyn Any+ Send>>> {
+            match panic::catch_unwind(AssertUnwindSafe(|| f())) {
+                Ok(CoroutineResult::Yield(x)) => CoroutineResult::Yield(x),
+                Ok(CoroutineResult::Return(Ok(x))) => CoroutineResult::Return(Ok(x)),
+                Err(x) => CoroutineResult::Return(Err(x)),
+            }
         }
 
         #[inline]
@@ -229,7 +233,9 @@ cfg_if::cfg_if! {
         }
 
         #[inline]
-        pub fn catch_forced_unwind<T>(f: impl FnOnce() -> Result<T, CaughtPanic>) -> Result<T, Box<dyn Any + Send>> {
+        pub fn catch_forced_unwind<Yield, Return>(
+            f: impl FnOnce() -> CoroutineResult<Yield, Result<Return, CaughtPanic>>
+        ) -> CoroutineResult<Yield, Result<Return, Box<dyn Any+ Send>>> {
             f()
         }
 
