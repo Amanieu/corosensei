@@ -438,13 +438,74 @@ mod trap_handler {
         > = Cell::new(None);
     }
 
+    // powerpc64 ucontext
+    const __NGREG: usize = 48;
+    const __NFPREG: usize = 33;
+    const __NVRREG: usize = 34;
+    use libc::{c_int, c_long, c_uint, c_ulong};
+    type gregset_t = [c_ulong; __NGREG];
+    type fpregset_t = [c_ulong; __NFPREG];
+    struct ucontext_t {
+        uc_flags: c_ulong,
+        uc_link: *mut ucontext_t,
+        uc_stack: libc::stack_t,
+        uc_sigmask: libc::sigset_t,
+        uc_mcontext: mcontext_t,
+    }
+    struct pt_regs {
+        gpr: [c_ulong; 32],
+        nip: c_ulong,
+        msr: c_ulong,
+        orig_gpr3: c_ulong,
+        ctr: c_ulong,
+        link: c_ulong,
+        xer: c_ulong,
+        ccr: c_ulong,
+        softe: c_ulong,
+        trap: c_ulong,
+        dar: c_ulong,
+        dsisr: c_ulong,
+        result: c_ulong,
+    }
+    struct mcontext_t {
+        __glibc_reserved: [c_ulong; 4],
+        signal: c_int,
+        __pad0: c_int,
+        handler: c_ulong,
+        oldmask: c_ulong,
+        regs: *mut pt_regs,
+        gp_regs: gregset_t,
+        fp_regs: fpregset_t,
+        v_regs: *mut vrregset_t,
+        vmx_reserve: [c_long; __NVRREG + __NVRREG + 1],
+    }
+    #[repr(align(16))]
+    struct vrregset_t {
+        vrregs: [[c_uint; 4]; 32],
+        vscr: vscr_t,
+        vrsave: c_uint,
+        __pad: [c_uint; 3],
+    }
+    #[repr(align(4))]
+    struct vscr_t {
+        #[cfg(target_endian = "big")]
+        __pad: [c_uint; 3],
+        #[cfg(target_endian = "big")]
+        vscr_word: c_uint,
+
+        #[cfg(target_endian = "little")]
+        vscr_word: c_uint,
+        #[cfg(target_endian = "little")]
+        __pad: [c_uint; 3],
+    }
+
     #[cfg(unix)]
     pub fn setup_handler() {
         use std::{mem, ptr};
         unsafe extern "C" fn signal_handler(
             _signum: libc::c_int,
             _siginfo: &libc::siginfo_t,
-            context: &mut libc::ucontext_t,
+            context: &mut ucontext_t,
         ) {
             let (handler, f) = HANDLER.with(|x| x.get().unwrap());
 
