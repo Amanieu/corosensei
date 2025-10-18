@@ -1,99 +1,65 @@
-//! Low-level powerpc64le support.
+//! Low-level PowerPC support.
 //!
-//! This file contains the low level operations that deal with switching between
-//! stacks.
-//!
-//! The core operations are:
-//! - `init_stack` to initialize a stack for the first resume.
-//! - `switch_and_link` to switch control into a coroutine.
-//! - `switch_yield` to return control from a coroutine back to its parent.
-//! - `switch_and_reset` to return control for the last time.
-//!
-//! ## Linked stacks
-//!
-//! Stack linking allows a context switch to be automatically performed when the
-//! initial function of a context returns or unwinds. This works by stashing a
-//! copy of the parent (the routine resumes/invokes a coroutine) context stack
-//! pointer near the stack base and updating it every time we switch into the
-//! the child (the coroutine) context using `switch_and_link`.
-//!
-//! For unwinding and backtraces to work as expected (that is, to continue in
-//! the parent after unwinding past the initial function of a child context),
-//! we need to use special DWARF CFI instructions to tell the unwinder how to
-//! find the parent frame.
-//!
-//! If you're curious a decent introduction to CFI things and unwinding is at
-//! <https://www.imperialviolet.org/2017/01/18/cfi.html>.
-//!
-//! ## Frame pointers
-//!
-//! Some tools or OSes do not use DWARF for stack unwinding, prefering to use
-//! the older (but simpler) frame pointer chain to capture a backtrace. This is
-//! particularly common in performance profiling tools such as Linux's perf
-//! callgraph profiler. These work by following a linked list of frame records
-//! starting from the FP register. Each record consists of 2 words: a pointer
-//! to the previous frame (aka the previous FP value) and the return address
-//! for this frame (aka the saved LR value).
-//!
-//! To support these tools, we also generate a valid stack frame record when
-//! switching into a coroutine. This works by treating the parent link at the
-//! root of the stack as a frame record which points to the top of the parent
-//! stack. The top of the parent stack contains the saved FP and LR values in
-//! the correct format for a frame record, which allows unwinding to continue on
-//! the parent stack.
-//!
-//! The LR value associated with the parent link is invalid since it points to
-//! the start of the initial function, but this shouldn't block the unwinding
-//! process.
+//! This file is heavily based on the x86_64 implementation.
+//! Relevant differences are highlighted in comments, but otherwise most
+//! comments have been removed to avoid duplication. Refer to x86_64.rs for
+//! detailed comments about what is happening in this file.
 //!
 //! ## Stack layout
-//!
-//! Note: Non-volatile registers R29, R30, and R31 need to be explicitly
-//! saved/restored on our stack because they are used internally by LLVM and
-//! cannot be used as operands for inline asm (e.g., `inlate()`).
 //!
 //! Here is what the layout of the stack looks like when a coroutine is
 //! suspended.
 //!
-//! ```text
+//! Note: "link area" refers to the minimal 32-byte stack frame header that is
+//! required by the PowerPC ABI.
 //!
+//! ```text
 //! +--------------+  <- Stack base
-//! | Initial func |  <- Only used once when resuming for the first time.
-//! +--------------+
-//! | Parent link  |  <- The Yielder is a pointer to this address. When the
-//! +--------------+     coroutine is running, it points to the top of the
-//! |              |     parent stack which contains a saved R29, R30, R31,
-//! ~    ...       ~     and LR just like a suspened coroutine.
+//! | Padding      |  <-
+//! +--------------+   |
+//! | Initial func |  <-
+//! +--------------+   | This mirrors the 32-byte link area layout.
+//! | Padding      |  <-
+//! +--------------+   |
+//! | Parent link  |  <-
+//! +--------------+ <- The 4 fields above form a fake link area which
+//! |              |    backchains back to the parent stack.
+//! ~     ...      ~
 //! |              |
 //! +--------------+
-//! |  Saved R31   |
+//! |              |
+//! | Link area    |  <- 32-byte link area of the last frame before the suspend.
+//! |              |     The LR field holds the PC to resume execution at.
+//! +--------------+  <- Saved stack pointer points here.
+//! | Saved R31    |
 //! +--------------+
-//! |  Saved R30   |
+//! | Saved R30    |
 //! +--------------+
-//! |  Saved R29   |
+//! | Saved R29    |
 //! +--------------+
-//! |  Saved LR    |
-//! +--------------+
-//! |  Link area   |  <- 32-byte link area
+//! | Saved R2     |
 //! +--------------+
 //! ```
 //!
 //! And this is the layout of the parent stack when a coroutine is running:
 //!
 //! ```text
-//! +--------------+
-//! |     ...      |
-//! |  saved LR    |  <- 32-byte link area.
-//! |     ...      |
-//! +--------------+  <- Stack base.
-//! |  Saved R31   |
-//! +--------------+
-//! |  Saved R30   |
-//! +--------------+
-//! |  Saved R29   |  <- frame pointer chain since FP points to it.
-//! +--------------+  <- Parent link points here.
-//! |  Link area   |  <- 32-byte link area
-//! +--------------+
+//! |           |
+//! ~    ...    ~
+//! |           |
+//! +-----------+
+//! |           |
+//! | Link area |  <- 32-byte link area of the last frame before the suspend.
+//! |           |     The LR field holds the PC to resume execution at.
+//! +-----------+  <- Parent link points here.
+//! | Saved R31 |
+//! +-----------+
+//! | Saved R30 |
+//! +-----------+
+//! | Saved R29 |
+//! +-----------+
+//! | Saved R2  |
+//! +-----------+
 //! ```
 //!
 //! And finally, this is the stack layout of a coroutine that has just been
@@ -101,7 +67,11 @@
 //!
 //! ```text
 //! +--------------+  <- Stack base
+//! | Padding      |
+//! +--------------+
 //! | Initial func |
+//! +--------------+
+//! | Padding      |
 //! +--------------+
 //! | Parent link  |
 //! +--------------+
@@ -109,9 +79,21 @@
 //! ~ Initial obj  ~
 //! |              |
 //! +--------------+
-//! | Initial PC   |
+//! | Padding      |  <-
+//! +--------------+   |
+//! | Initial PC   |  <-
+//! +--------------+   | This mirrors the 32-byte link area layout.
+//! | Padding      |  <-
+//! +--------------+   |
+//! | Padding      |  <-
+//! +--------------+  <- Initial SP points here
+//! | Saved R31    |
 //! +--------------+
-//! |  Link area   |  <- 32-byte link area
+//! | Saved R30    |
+//! +--------------+
+//! | Saved R29    |
+//! +--------------+
+//! | Saved R2     |
 //! +--------------+  <- stack top
 //! ```
 
