@@ -1,99 +1,65 @@
-//! Low-level powerpc64le support.
+//! Low-level PowerPC support.
 //!
-//! This file contains the low level operations that deal with switching between
-//! stacks.
-//!
-//! The core operations are:
-//! - `init_stack` to initialize a stack for the first resume.
-//! - `switch_and_link` to switch control into a coroutine.
-//! - `switch_yield` to return control from a coroutine back to its parent.
-//! - `switch_and_reset` to return control for the last time.
-//!
-//! ## Linked stacks
-//!
-//! Stack linking allows a context switch to be automatically performed when the
-//! initial function of a context returns or unwinds. This works by stashing a
-//! copy of the parent (the routine resumes/invokes a coroutine) context stack
-//! pointer near the stack base and updating it every time we switch into the
-//! the child (the coroutine) context using `switch_and_link`.
-//!
-//! For unwinding and backtraces to work as expected (that is, to continue in
-//! the parent after unwinding past the initial function of a child context),
-//! we need to use special DWARF CFI instructions to tell the unwinder how to
-//! find the parent frame.
-//!
-//! If you're curious a decent introduction to CFI things and unwinding is at
-//! <https://www.imperialviolet.org/2017/01/18/cfi.html>.
-//!
-//! ## Frame pointers
-//!
-//! Some tools or OSes do not use DWARF for stack unwinding, prefering to use
-//! the older (but simpler) frame pointer chain to capture a backtrace. This is
-//! particularly common in performance profiling tools such as Linux's perf
-//! callgraph profiler. These work by following a linked list of frame records
-//! starting from the FP register. Each record consists of 2 words: a pointer
-//! to the previous frame (aka the previous FP value) and the return address
-//! for this frame (aka the saved LR value).
-//!
-//! To support these tools, we also generate a valid stack frame record when
-//! switching into a coroutine. This works by treating the parent link at the
-//! root of the stack as a frame record which points to the top of the parent
-//! stack. The top of the parent stack contains the saved FP and LR values in
-//! the correct format for a frame record, which allows unwinding to continue on
-//! the parent stack.
-//!
-//! The LR value associated with the parent link is invalid since it points to
-//! the start of the initial function, but this shouldn't block the unwinding
-//! process.
+//! This file is heavily based on the x86_64 implementation.
+//! Relevant differences are highlighted in comments, but otherwise most
+//! comments have been removed to avoid duplication. Refer to x86_64.rs for
+//! detailed comments about what is happening in this file.
 //!
 //! ## Stack layout
-//!
-//! Note: Non-volatile registers R29, R30, and R31 need to be explicitly
-//! saved/restored on our stack because they are used internally by LLVM and
-//! cannot be used as operands for inline asm (e.g., `inlate()`).
 //!
 //! Here is what the layout of the stack looks like when a coroutine is
 //! suspended.
 //!
-//! ```text
+//! Note: "link area" refers to the minimal 32-byte stack frame header that is
+//! required by the PowerPC ABI.
 //!
+//! ```text
 //! +--------------+  <- Stack base
-//! | Initial func |  <- Only used once when resuming for the first time.
-//! +--------------+
-//! | Parent link  |  <- The Yielder is a pointer to this address. When the
-//! +--------------+     coroutine is running, it points to the top of the
-//! |              |     parent stack which contains a saved R29, R30, R31,
-//! ~    ...       ~     and LR just like a suspened coroutine.
+//! | Padding      |  <-
+//! +--------------+   |
+//! | Initial func |  <-
+//! +--------------+   | This mirrors the 32-byte link area layout.
+//! | Padding      |  <-
+//! +--------------+   |
+//! | Parent link  |  <-
+//! +--------------+ <- The 4 fields above form a fake link area which
+//! |              |    backchains back to the parent stack.
+//! ~     ...      ~
 //! |              |
 //! +--------------+
-//! |  Saved R31   |
+//! |              |
+//! | Link area    |  <- 32-byte link area of the last frame before the suspend.
+//! |              |     The LR field holds the PC to resume execution at.
+//! +--------------+  <- Saved stack pointer points here.
+//! | Saved R31    |
 //! +--------------+
-//! |  Saved R30   |
+//! | Saved R30    |
 //! +--------------+
-//! |  Saved R29   |
+//! | Saved R29    |
 //! +--------------+
-//! |  Saved LR    |
-//! +--------------+
-//! |  Link area   |  <- 32-byte link area
+//! | Saved R2     |
 //! +--------------+
 //! ```
 //!
 //! And this is the layout of the parent stack when a coroutine is running:
 //!
 //! ```text
-//! +--------------+
-//! |     ...      |
-//! |  saved LR    |  <- 32-byte link area.
-//! |     ...      |
-//! +--------------+  <- Stack base.
-//! |  Saved R31   |
-//! +--------------+
-//! |  Saved R30   |
-//! +--------------+
-//! |  Saved R29   |  <- frame pointer chain since FP points to it.
-//! +--------------+  <- Parent link points here.
-//! |  Link area   |  <- 32-byte link area
-//! +--------------+
+//! |           |
+//! ~    ...    ~
+//! |           |
+//! +-----------+
+//! |           |
+//! | Link area |  <- 32-byte link area of the last frame before the suspend.
+//! |           |     The LR field holds the PC to resume execution at.
+//! +-----------+  <- Parent link points here.
+//! | Saved R31 |
+//! +-----------+
+//! | Saved R30 |
+//! +-----------+
+//! | Saved R29 |
+//! +-----------+
+//! | Saved R2  |
+//! +-----------+
 //! ```
 //!
 //! And finally, this is the stack layout of a coroutine that has just been
@@ -101,7 +67,11 @@
 //!
 //! ```text
 //! +--------------+  <- Stack base
+//! | Padding      |
+//! +--------------+
 //! | Initial func |
+//! +--------------+
+//! | Padding      |
 //! +--------------+
 //! | Parent link  |
 //! +--------------+
@@ -109,9 +79,21 @@
 //! ~ Initial obj  ~
 //! |              |
 //! +--------------+
-//! | Initial PC   |
+//! | Padding      |  <-
+//! +--------------+   |
+//! | Initial PC   |  <-
+//! +--------------+   | This mirrors the 32-byte link area layout.
+//! | Padding      |  <-
+//! +--------------+   |
+//! | Padding      |  <-
+//! +--------------+  <- Initial SP points here
+//! | Saved R31    |
 //! +--------------+
-//! |  Link area   |  <- 32-byte link area
+//! | Saved R30    |
+//! +--------------+
+//! | Saved R29    |
+//! +--------------+
+//! | Saved R2     |
 //! +--------------+  <- stack top
 //! ```
 
@@ -128,7 +110,7 @@ use crate::util::EncodedValue;
 
 pub const STACK_ALIGNMENT: usize = 16;
 pub const PARENT_STACK_OFFSET: usize = 0;
-pub const PARENT_LINK_OFFSET: usize = 16;
+pub const PARENT_LINK_OFFSET: usize = 32;
 pub type StackWord = u64;
 
 // This is a pretty special function that has no real signature. Its use is to
@@ -144,7 +126,7 @@ global_asm!(
     ".balign 4",
     asm_function_begin!("stack_init_trampoline"),
     ".cfi_startproc",
-    cfi_signal_frame!(),
+    //cfi_signal_frame!(),
     // At this point our register state contains the following:
     // - SP points to the top of the parent stack.
     // - LR contains the return address in the parent context.
@@ -153,19 +135,21 @@ global_asm!(
     // - R4 points to the base of the initial coroutine stack.
     // - R3 contains the argument passed from switch_and_link.
     //
-    // Save the R29, R30, and R31 of the parent context to the parent stack.
+    // Save the R2, R29, R30, and R31 of the parent context to the parent stack.
     // When combined with the return address this forms a valid frame record
-    // (R29, R30, R31 & LR) in the frame pointer chain.
+    // (R2, R29, R30, R31 & LR) in the frame pointer chain.
     "mflr 0",
-    "std 31, -8(1)",
-    "std 30, -16(1)",
-    "std 29, -24(1)",
-    "std 0, 16(1)",
     // Allocate a frame of 56 bytes (link area + space for R29, R30, and R31).
     "stdu 1, -56(1)",
-    // Write the parent stack pointer to the parent link (back chain slot) of
-    // the coroutine stack and adjust R4 to point to the parent link.
-    "addi 4, 4, -16",
+    "std 31, 48(1)",
+    "std 30, 40(1)",
+    "std 29, 32(1)",
+    // Save R2 and LR in the link area of the parent frame.
+    "std 2, 80(1)",
+    "std 0, 72(1)",
+    // Adjust R4 to point to the parent link and Write the parent stack pointer
+    // to the parent link (back chain slot) of the coroutine stack.
+    "addi 4, 4, -32",
     "std 1, 0(4)",
     // Switch to the coroutine stack.
     "mr 1, 5",
@@ -177,7 +161,7 @@ global_asm!(
     // 5: byte length of the following DWARF expression
     // 0x8f 0x00: DW_OP_breg31 (31 + 0)
     // 0x06: DW_OP_deref
-    // 0x23, 0x20: DW_OP_plus_uconst 56
+    // 0x23, 0x38: DW_OP_plus_uconst 56
     ".cfi_escape 0x0f, 5, 0x8f, 0x00, 0x06, 0x23, 0x38",
     // Now we can tell the unwinder how to restore the 3 registers that were
     // pushed on the parent stack. These are described as offsets from the CFA
@@ -185,10 +169,11 @@ global_asm!(
     ".cfi_offset r31, -8",
     ".cfi_offset r30, -16",
     ".cfi_offset r29, -24",
+    ".cfi_offset r2, 24",
     ".cfi_offset lr, 16",
     // Set up the 3rd argument to the initial function to point to the object
     // that init_stack() set up on the stack.
-    "addi 5, 1, 40",
+    "addi 5, 1, 32",
     // As in the original x86_64 code, hand-write the call operation so that it
     // doesn't push an entry into the CPU's return prediction stack.
 
@@ -200,7 +185,7 @@ global_asm!(
     "addi 0, 6, 24",
     "mtlr 0",
     // load the initial function to R12 for function linkage.
-    "ld 12, 8(4)",
+    "ld 12, 16(4)",
     "mtctr 12",
     "bctr",
     asm_function_alt_entry!("stack_init_trampoline_return"),
@@ -223,7 +208,7 @@ global_asm!(
     cfi_signal_frame!(),
     // At this point our register state contains the following:
     // - SP points to the top of the parent stack.
-    // - R29, R30, and R31 hold their value from the parent context.
+    // - R2, R29, R30, and R31 hold their value from the parent context.
     // - R5 is the function that should be called.
     // - R4 points to the top of our stack.
     // - R3 contains the argument to be passed to the function.
@@ -234,12 +219,14 @@ global_asm!(
     "std 31, 48(1)",
     "std 30, 40(1)",
     "std 29, 32(1)",
-    // Save LR in the link area of the parent frame.
+    // Save R2 and LR in the link area of the parent frame.
+    "std 2, 80(1)",
     "std 0, 72(1)",
     ".cfi_def_cfa 1, 0",
     ".cfi_offset r31, 48",
     ".cfi_offset r30, 40",
     ".cfi_offset r29, 32",
+    ".cfi_offset r2, 80",
     ".cfi_offset lr, 72",
     // Switch to the new stack.
     "mr 31, 1",
@@ -261,6 +248,7 @@ global_asm!(
     "ld 31, -8(1)",
     "ld 30, -16(1)",
     "ld 29, -24(1)",
+    "ld 2, 24(1)",
     "ld 12, 16(1)",
     "mtlr 12",
     "blr",
@@ -286,8 +274,13 @@ extern "C" {
 pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) -> StackPointer {
     let mut sp = adjusted_stack_base(stack).get();
 
+    // The following 4 slots form a fake 32-byte link area layout.
+    push(&mut sp, None);
+
     // Initial function.
     push(&mut sp, Some(func as StackWord));
+
+    push(&mut sp, None);
 
     // Placeholder for parent link.
     push(&mut sp, None);
@@ -296,12 +289,12 @@ pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) ->
     // STACK_ALIGNMENT.
     allocate_obj_on_stack(&mut sp, 16, obj);
 
-    // Entry point called by switch_and_link().
+    // This mirrors the 32-byte link area layout.
+    push(&mut sp, None);
+
+    // Set the LR slot with the entry point called by switch_and_link().
     push(&mut sp, Some(stack_init_trampoline as StackWord));
 
-    // Space for 32 bytes link area.
-    push(&mut sp, None);
-    push(&mut sp, None);
     push(&mut sp, None);
     push(&mut sp, None);
 
@@ -332,8 +325,8 @@ pub unsafe fn switch_and_link(
         // DW_CFA_GNU_args_size that may have been set in the current function.
         cfi_reset_args_size_root!(),
 
-        // Read the saved PC from the coroutine stack and call it.
-        "ld 12, 32(5)",
+        // Read the saved PC from the link area of the coroutine stack and call it.
+        "ld 12, 16(5)",
         "mtctr 12",
         "bctrl",
         "nop",
@@ -379,6 +372,8 @@ pub unsafe fn switch_and_link(
 /// context is available in the parent link on the stack.
 // This function must always be inlined because it is very sensitive to the
 // CPU's return address predictor. See stack_init_trampoline for more details.
+//
+// FIXME: Inlining this function fails tests.
 //#[inline(always)]
 pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) -> EncodedValue {
     let ret_val;
@@ -386,19 +381,21 @@ pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) ->
     asm_may_unwind_yield!(
         // Save R29, R30, and R31. Ideally this would be done by specifying them as
         // clobbers but that is not possible since they are LLVM reserved
-        // registers. Also save our LR.
+        // registers. Also save our R2 and LR.
         "std 31, -8(1)", // Save Back chain
         "std 30, -16(1)",
         "std 29, -24(1)",
-        "stdu 1, -32(1)", // The space for R29, R30, R31.
+        "std 2, 24(1)",
+        "stdu 1, -64(1)", // The 32-byte link area and the space for R29, R30, R31.
 
+        // Get the return address.
         // FIXME: Workaroud for P9 and earlier that do not have pc-rel instructions.
         "bl 1f",
         "1:",
         "mflr 6",
-        "addi 0, 6, 44",
+        "addi 0, 6, 48",
         // Save return address in the parent frame.
-        "std 0, 32(1)",
+        "std 0, 16(1)",
 
         // Get the parent stack pointer from the parent link.
         "ld 5, 0(4)",
@@ -406,10 +403,11 @@ pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) ->
         // Save our stack pointer to R4.
         "mr 4, 1",
 
-        // Restore R29, R30, R31, and LR from the parent stack.
+        // Restore R2, R29, R30, R31, and LR from the parent stack.
         "ld 29, 32(5)",
         "ld 30, 40(5)",
         "ld 31, 48(5)",
+        "ld 2, 80(5)",
         "ld 12, 72(5)", // Get the LR.
         "mtlr 12",
 
@@ -432,31 +430,33 @@ pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) ->
         // state contains the following:
         // - SP points to the top of the parent stack.
         // - LR contains the return address in the parent context.
-        // - R29 and R31 contain their value from the parent context.
+        // - R2, R29, R30, and R31 contain their value from the parent context.
         // - R5 points to the top of the coroutine stack.
         // - R4 points to the base of our stack.
         // - R3 contains the argument passed from switch_and_link.
         "0:",
 
-        // Push the R29, R30, R31, and LR values of the parent context onto the parent
-        // stack.
+        // Push the R2, R29, R30, R31, and LR values of the parent context onto
+        // the parent stack.
         "mflr 0",
         "addi 1, 1, -56",
         "std 31, 48(1)",
         "std 30, 40(1)",
         "std 29, 32(1)",
+        "std 2, 80(1)",
         "std 0, 72(1)",
 
         // Write the parent stack pointer to the parent link.
-        "std 1, -16(4)",
+        "std 1, -32(4)",
 
         // Switch to the coroutine stack while popping the saved registers.
-        "addi 1, 5, 32",
+        "addi 1, 5, 64",
 
-        // Load our R29, R30, and R31 values from the coroutine stack.
+        // Load our R2, R29, R30, and R31 values from the coroutine stack.
         "ld 31, -8(1)",
         "ld 30, -16(1)",
         "ld 29, -24(1)",
+        "ld 2, 24(1)",
 
         // Pass the argument in R3.
         inlateout("3") arg => ret_val,
@@ -495,10 +495,11 @@ pub unsafe fn switch_and_reset(arg: EncodedValue, parent_link: *mut StackPointer
         // Load the parent context's stack pointer.
         "ld 5, 0({parent_link})",
 
-        // Restore R29, R30, R31, and LR from the parent stack.
+        // Restore R2, R29, R30, R31, and LR from the parent stack.
         "ld 29, 32(5)",
         "ld 30, 40(5)",
         "ld 31, 48(5)",
+        "ld 2, 80(5)",
         "ld 12, 72(5)",
         "mtlr 12",
 
@@ -527,7 +528,7 @@ pub unsafe fn switch_and_throw(
     sp: StackPointer,
     stack_base: StackPointer,
 ) -> (EncodedValue, Option<StackPointer>) {
-    extern "C-unwind " fn throw(forced_unwind: crate::unwind::ForcedUnwind) -> ! {
+    extern "C-unwind" fn throw(forced_unwind: crate::unwind::ForcedUnwind) -> ! {
         extern crate std;
         use std::boxed::Box;
         std::panic::resume_unwind(Box::new(forced_unwind));
@@ -541,7 +542,7 @@ pub unsafe fn switch_and_throw(
         "bl 0f",
         "0:",
         "mflr 6",
-        "addi 0, 6, 64",
+        "addi 0, 6, 72",
 
         // Save the parent context onto the parent stack.
         "mflr 0",
@@ -549,19 +550,21 @@ pub unsafe fn switch_and_throw(
         "std 31, 48(1)",
         "std 30, 40(1)",
         "std 29, 32(1)",
+        "std 2, 80(1)",
         "std 0, 72(1)",
 
         // Write the parent stack pointer to the parent link.
-        "std 1, -16(4)",
+        "std 1, -32(4)",
 
         // Switch to the coroutine stack while popping the saved registers.
-        "addi 1, 5, 32",
+        "addi 1, 5, 64",
 
         // Load the coroutine registers, with the saved LR value into LR.
         "ld 31, -8(1)",
         "ld 30, -16(1)",
         "ld 29, -24(1)",
-        "ld 0, 224(1)",
+        "ld 2, 24(1)",
+        "ld 0, 16(1)",
         "mtlr 0",
 
         // DW_CFA_GNU_args_size 0
@@ -575,7 +578,7 @@ pub unsafe fn switch_and_throw(
         // Simulate a call with an artificial return address so that the throw
         // function will unwind straight into the switch_and_yield() call with
         // the register state expected outside the asm! block.
-        "b throw",
+        "b {throw}",
 
         // Upon returning, our register state is just like a normal return into
         // switch_and_link().
@@ -585,7 +588,7 @@ pub unsafe fn switch_and_throw(
         "addi 1, 5, 56",
 
         // Helper function to trigger stack unwinding.
-        throw = throw,
+        throw = sym throw,
 
         // Argument to pass to the throw function.
         in("3") forced_unwind.0.get(),
@@ -615,7 +618,7 @@ pub unsafe fn drop_initial_obj(
     stack_ptr: StackPointer,
     drop_fn: unsafe fn(ptr: *mut u8),
 ) {
-    let ptr = (stack_ptr.get() as *mut u8).add(40);
+    let ptr = (stack_ptr.get() as *mut u8).add(32);
     drop_fn(ptr);
 }
 
