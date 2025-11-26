@@ -50,17 +50,10 @@ impl DefaultStack {
                 return Err(Error::last_os_error());
             }
 
-            // A 32-byte link area is reserved above the base, as defined by the
-            // 64-bit ELF PowerPC stack frame layout.
-            let link_area = if cfg!(target_arch = "powerpc64") {
-                32
-            } else {
-                0
-            };
             // Create the result here. If the mprotect call fails then this will
             // be dropped and the memory will be unmapped.
             let out = Self {
-                base: StackPointer::new(mmap as usize + mmap_len - link_area).unwrap(),
+                base: StackPointer::new(mmap as usize + mmap_len).unwrap(),
                 mmap_len,
                 valgrind: ManuallyDrop::new(ValgrindStackRegistration::new(
                     mmap as *mut u8,
@@ -95,13 +88,7 @@ impl Drop for DefaultStack {
             // De-register the stack first.
             ManuallyDrop::drop(&mut self.valgrind);
 
-            // A 32-byte link area is reserved above the base on PowerPC.
-            let link_area = if cfg!(target_arch = "powerpc64") {
-                32
-            } else {
-                0
-            };
-            let mmap = self.base.get() - self.mmap_len + link_area;
+            let mmap = self.base.get() - self.mmap_len;
             let ret = libc::munmap(mmap as _, self.mmap_len);
             debug_assert_eq!(ret, 0);
         }
