@@ -9,12 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.2](https://github.com/Amanieu/corosensei/compare/v0.3.1...v0.3.2) - 2025-12-03
 
-### Other
-
-- Add powerpc64le-unknown-linux-gnu to README and CI
-- Rework PowerPC implementation to use a new stack layout
-- Addressed comments:
-- Port to target powerpc64.
+- Added PowerPC64 support (#61)
 
 ## [0.3.1](https://github.com/Amanieu/corosensei/compare/v0.3.0...v0.3.1) - 2025-10-11
 
