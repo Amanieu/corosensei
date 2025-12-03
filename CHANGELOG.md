@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/Amanieu/corosensei/compare/v0.3.1...v0.3.2) - 2025-12-03
+
+- Added PowerPC64 support (#61)
+
 ## [0.3.1](https://github.com/Amanieu/corosensei/compare/v0.3.0...v0.3.1) - 2025-10-11
 
 - Try harder when forcing coroutines to unwind (#62)

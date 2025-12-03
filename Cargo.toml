@@ -1,6 +1,6 @@
 [package]
 name = "corosensei"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["Amanieu d'Antras <amanieu@gmail.com>"]
 description = "A fast and safe implementation of stackful coroutines"
 license = "MIT OR Apache-2.0"
