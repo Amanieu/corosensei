@@ -80,6 +80,14 @@ cfg_if::cfg_if! {
             );
             result
         }
+    } else if #[cfg(target_arch = "powerpc64")] {
+        type Value = u64;
+
+        // FIXME: look at Valgrind later, use a no-op for now.
+        #[inline]
+        unsafe fn valgrind_request(default: Value, _args: &[Value; 6]) -> Value {
+            default
+        }
     } else if #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))] {
         type Value = usize;
 

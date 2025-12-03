@@ -516,6 +516,8 @@ mod trap_handler {
                     sp = (*context.uc_mcontext).__ss.__sp as usize;
                 } else if #[cfg(all(target_os = "linux", target_arch = "loongarch64"))] {
                     sp = context.uc_mcontext.__gregs[3]  as usize;
+                } else if #[cfg(all(target_os = "linux", target_arch = "powerpc64"))] {
+                    sp = (*context.uc_mcontext.regs).gpr[1]  as usize;
                 } else {
                     compile_error!("Unsupported platform");
                 }
@@ -622,6 +624,14 @@ mod trap_handler {
                     context.uc_mcontext.__gregs[4] = a0;
                     context.uc_mcontext.__gregs[5] = a1;
                     context.uc_mcontext.__gregs[22] = fp;
+                } else if #[cfg(all(target_os = "linux", target_arch = "powerpc64"))] {
+                    let TrapHandlerRegs { pc, sp, r3, r4, r12, lr } = regs;
+                    (*context.uc_mcontext.regs).nip = pc;
+                    (*context.uc_mcontext.regs).gpr[1] = sp;
+                    (*context.uc_mcontext.regs).gpr[3] = r3;
+                    (*context.uc_mcontext.regs).gpr[4] = r4;
+                    (*context.uc_mcontext.regs).gpr[12] = r12;
+                    (*context.uc_mcontext.regs).link = lr;
                 } else {
                     compile_error!("Unsupported platform");
                 }
