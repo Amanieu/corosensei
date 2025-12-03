@@ -86,6 +86,7 @@ This crate currently supports the following targets:
 | ARM         | ✅                                 | ❌                        | ❌       |
 | RISC-V      | ✅                                 | ❌                        | ❌       |
 | LoongArch64 | ✅                                 | ❌                        | ❌       |
+| PowerPC64   | ✅                                 | ❌                        | ❌       |
 
 \* Linked backtraces are not supported on x86 Windows.
 
