@@ -400,6 +400,7 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
     /// Slow path of `force_unwind` when the coroutine is known to not have
     /// terminated yet.
     #[cold]
+    #[allow(unused_mut)]
     fn force_unwind_slow(&mut self, mut stack_ptr: StackPointer) {
         // If the coroutine has not started yet then we just need to drop the
         // initial object.

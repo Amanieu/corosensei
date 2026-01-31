@@ -5,7 +5,7 @@
 //! through our inline assembly code directly by using the `asm-unwind` and
 //! `c_unwind` nightly features.
 //!
-//! If nighlty Rust is not available then we catch panics with `catch_unwind`,
+//! If nightly Rust is not available then we catch panics with `catch_unwind`,
 //! pass them through the assembly code as a `Result` and then call
 //! `resume_unwind` to continue unwinding afterwards.
 //!
@@ -15,8 +15,8 @@
 
 #![allow(unused_macros)]
 
+use crate::stack::StackPointer;
 use crate::util::EncodedValue;
-use crate::{stack::StackPointer, CoroutineResult};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "unwind")] {
@@ -24,6 +24,7 @@ cfg_if::cfg_if! {
         use core::any::Any;
         use std::boxed::Box;
         use std::panic::{self, AssertUnwindSafe};
+        use crate::CoroutineResult;
     }
 }
 
