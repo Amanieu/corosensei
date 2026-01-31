@@ -17,7 +17,7 @@ cfg_if::cfg_if! {
     }
 }
 cfg_if::cfg_if! {
-    if #[cfg(windows)] {
+    if #[cfg(any(windows, target_os = "uefi"))] {
         // COFF
         macro_rules! asm_function_begin {
             ($name:literal) => {
@@ -40,6 +40,9 @@ cfg_if::cfg_if! {
             ($name:literal) => {
                 ""
             };
+        }
+        macro_rules! cfi_signal_frame {
+            () => { "" }
         }
     } else if #[cfg(target_vendor = "apple")] {
         // Mach-O
