@@ -78,15 +78,15 @@ fn main() {
 
 This crate currently supports the following targets:
 
-|             | ELF (Linux, BSD, bare metal, etc) | Darwin (macOS, iOS, etc) | Windows |
-| ----------- | --------------------------------- | ------------------------ | ------- |
-| x86_64      | ✅                                 | ✅                        | ✅       |
-| x86         | ✅                                 | ❌                        | ⚠️*      |
-| AArch64     | ✅                                 | ✅                        | ❌       |
-| ARM         | ✅                                 | ❌                        | ❌       |
-| RISC-V      | ✅                                 | ❌                        | ❌       |
-| LoongArch64 | ✅                                 | ❌                        | ❌       |
-| PowerPC64   | ✅                                 | ❌                        | ❌       |
+|             | ELF (Linux, BSD, bare metal, etc) | Darwin (macOS, iOS, etc) | Windows | UEFI (no_std) |
+| ----------- | --------------------------------- | ------------------------ | ------- | --------------- |
+| x86_64      | ✅                                 | ✅                        | ✅       | ✅             |
+| x86         | ✅                                 | ❌                        | ⚠️*      | ❌             |
+| AArch64     | ✅                                 | ✅                        | ❌       | ✅             |
+| ARM         | ✅                                 | ❌                        | ❌       | ❌             |
+| RISC-V      | ✅                                 | ❌                        | ❌       | ❌             |
+| LoongArch64 | ✅                                 | ❌                        | ❌       | ❌             |
+| PowerPC64   | ✅                                 | ❌                        | ❌       | ❌             |
 
 \* Linked backtraces are not supported on x86 Windows.
 
