@@ -42,7 +42,7 @@ cfg_if::cfg_if! {
             };
         }
         macro_rules! cfi_signal_frame {
-            () => { "" }
+            () => { ".cfi_signal_frame" }
         }
     } else if #[cfg(target_vendor = "apple")] {
         // Mach-O
