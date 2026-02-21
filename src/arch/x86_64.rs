@@ -307,7 +307,10 @@ pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) ->
 
     // Set up an address at the top of the stack which is called by
     // switch_and_link() during the initial context switch.
-    push(&mut sp, Some(stack_init_trampoline as StackWord));
+    push(
+        &mut sp,
+        Some(stack_init_trampoline as *const () as StackWord),
+    );
 
     StackPointer::new_unchecked(sp)
 }

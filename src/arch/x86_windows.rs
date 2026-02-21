@@ -415,7 +415,10 @@ pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) ->
     push(&mut sp, Some(initial_seh_handler as StackWord));
 
     // Entry point called by switch_and_link().
-    push(&mut sp, Some(stack_init_trampoline as StackWord));
+    push(
+        &mut sp,
+        Some(stack_init_trampoline as *const () as StackWord),
+    );
 
     StackPointer::new_unchecked(sp)
 }

@@ -240,7 +240,10 @@ pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) ->
     push(&mut sp, None);
 
     // Set the LR slot with the entry point called by switch_and_link().
-    push(&mut sp, Some(stack_init_trampoline as StackWord));
+    push(
+        &mut sp,
+        Some(stack_init_trampoline as *const () as StackWord),
+    );
 
     push(&mut sp, None);
     push(&mut sp, None);

@@ -420,7 +420,10 @@ pub unsafe fn init_stack<T>(stack: &impl Stack, func: InitialFunc<T>, obj: T) ->
     debug_assert_eq!(sp % STACK_ALIGNMENT, 0);
 
     // Entry point called by switch_and_link().
-    push(&mut sp, Some(stack_init_trampoline as StackWord));
+    push(
+        &mut sp,
+        Some(stack_init_trampoline as *const () as StackWord),
+    );
 
     // Add an 8-byte offset because switch_and_link() looks for the target PC
     // 8 bytes above the stack pointer.
