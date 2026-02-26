@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3](https://github.com/Amanieu/corosensei/compare/v0.3.2...v0.3.3) - 2026-02-21
+
+### Other
+
+- Add support for UEFI targets ([#66](https://github.com/Amanieu/corosensei/pull/66))
+
 ## [0.3.2](https://github.com/Amanieu/corosensei/compare/v0.3.1...v0.3.2) - 2025-12-03
 
 - Added PowerPC64 support (#61)
