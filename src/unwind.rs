@@ -257,7 +257,7 @@ cfg_if::cfg_if! {
                 // a double-panic. Add a recursive panic guard just in case
                 // to ensure this function never returns with or without
                 // unwinding.
-                panic!("cannot propagte coroutine panic with #![no_std]");
+                panic!("cannot propagate coroutine panic with #![no_std]");
             });
             let result = f();
             core::mem::forget(guard);

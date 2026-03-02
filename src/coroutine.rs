@@ -538,7 +538,7 @@ impl<Input, Yield, Return, Stack: stack::Stack> Drop for Coroutine<Input, Yield,
         let guard = scopeguard::guard((), |()| {
             // We can't catch panics in #![no_std], force an abort using
             // a double-panic.
-            panic!("cannot propagte coroutine panic with #![no_std]");
+            panic!("cannot propagate coroutine panic with #![no_std]");
         });
         self.force_unwind();
         mem::forget(guard);
