@@ -47,7 +47,7 @@
 //! +--------------------------+
 //! | TEB.GuaranteedStackBytes |  <-
 //! +--------------------------+   |
-//! | TEB.DeallocationStack    |  <- These are fields in the Thread Environement
+//! | TEB.DeallocationStack    |  <- These are fields in the Thread Environment
 //! +--------------------------+   | Block (TEB) which need to be saved and
 //! | TEB.StackLimit           |  <- restored when switching stacks. The OS
 //! +--------------------------+   | looks at these fields for various stack
@@ -327,7 +327,7 @@ const EXCEPTION_LIST_END: usize = !0;
 /// This is needed to support SEHOP (Structured Exception Handling Overwrite
 /// Protection), an exploit mitigation technique that is sometimes activated by
 /// default. Essentially, RaiseException will verify that the current chain of
-/// exception handlers ends with the FinalExceptionHandler and termiante the
+/// exception handlers ends with the FinalExceptionHandler and terminate the
 /// process if that is not the case. For more details see:
 /// https://msrc-blog.microsoft.com/2009/02/02/preventing-the-exploitation-of-structured-exception-handler-seh-overwrites-with-sehop/
 ///
@@ -719,7 +719,7 @@ pub unsafe fn drop_initial_obj(
     drop_fn(ptr);
 
     // Also copy the TEB fields to the base of the stack so that they can be
-    // retreived by update_stack_teb_fields().
+    // retrieved by update_stack_teb_fields().
     let base = stack_base.get() as *mut StackWord;
     let stack = stack_ptr.get() as *const StackWord;
     *base.sub(1) = *stack.add(3); // StackLimit

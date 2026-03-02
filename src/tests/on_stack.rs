@@ -76,7 +76,7 @@ fn panics_propagated() {
     }
 }
 
-// The Windows stack starts out small with only one page comitted. Check that it
+// The Windows stack starts out small with only one page committed. Check that it
 // gets properly grown by the kernel as needed.
 #[test]
 fn stack_growth() {

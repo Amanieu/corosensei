@@ -34,7 +34,7 @@
 //! |                          |
 //! +--------------------------+
 //! | TEB.GuaranteedStackBytes |  <-
-//! +--------------------------+   | These are fields in the Thread Environement
+//! +--------------------------+   | These are fields in the Thread Environment
 //! | TEB.DeallocationStack    |  <- Block (TEB) which need to be saved and
 //! +--------------------------+   | restored when switching stacks. The OS
 //! | TEB.StackLimit           |  <- looks at these fields for various stack
@@ -603,7 +603,7 @@ pub unsafe fn drop_initial_obj(
     drop_fn(ptr);
 
     // Also copy the TEB fields to the base of the stack so that they can be
-    // retreived by update_stack_teb_fields().
+    // retrieved by update_stack_teb_fields().
     let base = stack_base.get() as *mut StackWord;
     let stack = stack_ptr.get() as *const StackWord;
     *base.sub(1) = *stack.add(2); // StackLimit

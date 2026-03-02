@@ -23,7 +23,7 @@
 //! To understand what is going on here, we need to cover several concepts
 //! first.
 //!
-//! ## Reserving and comitting memory
+//! ## Reserving and committing memory
 //!
 //! Linux allows `mmap`ing arbitrary amounts of virtual memory regardless of how
 //! much physical memory and swap space is available. This is know as
