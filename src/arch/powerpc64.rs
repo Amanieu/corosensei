@@ -283,7 +283,7 @@ pub unsafe fn switch_and_link(
 
         // Upon returning from switch_yield or switch_and_reset, our register
         // state contains the following:
-        // - SP: parant stack pointer.
+        // - SP: parent stack pointer.
         // - R4: The top of the coroutine stack, or 0 if coming from
         //       switch_and_reset.
         // - R3: The return value from the coroutine.
@@ -324,7 +324,7 @@ pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) ->
         "std 2, 24(1)",
 
         // Get the return address.
-        // FIXME: Workaroud for P9 and earlier that do not have pc-rel instructions.
+        // FIXME: Workaround for P9 and earlier that do not have pc-rel instructions.
         "bl 1f",
         "1:",
         "mflr 6",
@@ -453,7 +453,7 @@ pub unsafe fn switch_and_throw(
 
     asm_may_unwind_root!(
         // Set up a return address.
-        // FIXME: Workaroud for P9 and earlier that do not have pc-rel instructions.
+        // FIXME: Workaround for P9 and earlier that do not have pc-rel instructions.
         "bl 1f",
         "1:",
         "mflr 6",

@@ -24,7 +24,7 @@
 //!
 //! ## Frame pointers
 //!
-//! Some tools or OSes do not use DWARF for stack unwinding, prefering to use
+//! Some tools or OSes do not use DWARF for stack unwinding, preferring to use
 //! the older (but simpler) frame pointer chain to capture a backtrace. This is
 //! particularly common in performance profiling tools such as Linux's perf
 //! callgraph profiler. These work by following a linked list of frame records
@@ -55,7 +55,7 @@
 //! | Parent link  |  <- The Yielder is a pointer to this address. When the
 //! +--------------+     coroutine is running, it points to the top of the
 //! |              |     parent stack which contains a saved RIP, RBP and RBX
-//! ~     ...      ~     just like a suspened coroutine.
+//! ~     ...      ~     just like a suspended coroutine.
 //! |              |
 //! +--------------+
 //! | Saved RBP    |
