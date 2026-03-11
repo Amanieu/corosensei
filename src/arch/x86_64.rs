@@ -69,16 +69,36 @@
 //! And this is the layout of the parent stack when a coroutine is running:
 //!
 //! ```text
-//! |             |
-//! ~     ...     ~
-//! |             |
-//! +-------------+
-//! | Saved RBX   |
-//! +-------------+
-//! | Saved RIP   |  <- These 2 values form a valid entry in the frame pointer
-//! +-------------+   | chain. The parent link itself is another entry in the
-//! | Saved RBP   |  <- frame pointer chain since RBP points to it.
-//! +-------------+  <- Parent link points here.
+//! |                |
+//! ~     ...        ~
+//! |                |
+//! +----------------+
+//! | Saved RBX      |
+//! +----------------+
+//! | Saved RIP      |  <- These 2 values form a valid entry in the frame pointer
+//! +----------------+   | chain. The parent link itself is another entry in the
+//! | Saved RBP      |  <- frame pointer chain since RBP points to it.
+//! +----------------+  <- Parent link points here.
+//! ```
+//!
+//! On UEFI targets, a secondary copy of the saved RIP is added below the saved
+//! RBX. This is needed because SEH unwind codes are not as flexible as DWARF
+//! CFI and the unwinder always pops a return address after processing all
+//! unwind opcodes.
+//!
+//! ```text
+//! |                |
+//! ~     ...        ~
+//! |                |
+//! +----------------+
+//! | Secondary RIP  |  <- Only on UEFI; used by the SEH unwinder.
+//! +----------------+
+//! | Saved RBX      |
+//! +----------------+
+//! | Saved RIP      |
+//! +----------------+
+//! | Saved RBP      |
+//! +----------------+  <- Parent link points here.
 //! ```
 //!
 //! And finally, this is the stack layout of a coroutine that has just been
@@ -109,6 +129,32 @@ use crate::unwind::{
 };
 use crate::util::EncodedValue;
 
+// On UEFI targets, we emit SEH unwind information so that PE/COFF debuggers
+// (WinDbg, LLDB) can reconstruct backtraces across coroutine stack boundaries.
+// Unlike Windows, UEFI does not have a Thread Environment Block (TEB), so the
+// SEH annotations are simpler with adjusted stack offsets.
+//
+// The cfi!() and seh!() macros ensure that DWARF CFI and SEH directives are
+// mutually exclusive: UEFI uses SEH (.pdata/.xdata), all other platforms use
+// DWARF CFI (.eh_frame).
+cfg_if::cfg_if! {
+    if #[cfg(target_os = "uefi")] {
+        macro_rules! seh {
+            ($asm:expr) => { $asm }
+        }
+        macro_rules! cfi {
+            ($asm:expr) => { "" }
+        }
+    } else {
+        macro_rules! seh {
+            ($asm:expr) => { "" }
+        }
+        macro_rules! cfi {
+            ($asm:expr) => { $asm }
+        }
+    }
+}
+
 pub const STACK_ALIGNMENT: usize = 16;
 pub const PARENT_STACK_OFFSET: usize = 0;
 pub const PARENT_LINK_OFFSET: usize = 16;
@@ -118,15 +164,19 @@ pub type StackWord = u64;
 // be the "base" function of all coroutines. This entrypoint is used in
 // init_stack() to bootstrap the execution of a new coroutine.
 //
-// We also use this function as a persistent frame on the stack to emit dwarf
+// We also use this function as a persistent frame on the stack to emit unwind
 // information to unwind into the caller. This allows us to unwind from the
 // coroutines's stack back to the main stack that the coroutine was called from.
-// We use special dwarf directives here to do so since this is a pretty
-// nonstandard function.
+// We use special directives here to do so since this is a pretty nonstandard
+// function.
+//
+// On non-UEFI platforms we use DWARF CFI directives. On UEFI we use SEH
+// directives instead (see the seh!() and cfi!() macros above).
 global_asm!(
     ".balign 16",
     asm_function_begin!("stack_init_trampoline"),
-    ".cfi_startproc",
+    cfi!(".cfi_startproc"),
+    seh!(".seh_proc stack_init_trampoline"),
     // GDB has a hard-coded check that rejects backtraces where the frame
     // addresses do not monotonically increase. This can unfortunately trigger
     // when the stack of a coroutine is located at a higher address than its
@@ -171,9 +221,11 @@ global_asm!(
     // Set up the frame pointer to point at the parent link. This is needed for
     // the unwinding code below.
     "mov rbp, rsi",
-    // This sequence of magic numbers deserves some explanation. We need to tell
-    // the unwinder where to find the Canonical Frame Address (CFA) of the
-    // parent context.
+    //
+    // DWARF CFI unwind directives (non-UEFI platforms)
+    //
+    // We need to tell the unwinder where to find the Canonical Frame Address
+    // (CFA) of the parent context.
     //
     // The CFA is normally defined as the stack pointer value in the caller just
     // before executing the call instruction. In our case, this is the stack
@@ -192,13 +244,34 @@ global_asm!(
     // 0x76 0x00: DW_OP_breg6 (rbp + 0) -- GDB doesn't like DW_OP_reg6
     // 0x06: DW_OP_deref
     // 0x23, 0x18: DW_OP_plus_uconst 24
-    ".cfi_escape 0x0f, 5, 0x76, 0x00, 0x06, 0x23, 0x18",
+    cfi!(".cfi_escape 0x0f, 5, 0x76, 0x00, 0x06, 0x23, 0x18"),
     // Now we can tell the unwinder how to restore the 3 registers that were
     // pushed on the parent stack. These are described as offsets from the CFA
     // that we just calculated.
-    ".cfi_offset rbx, -8",
-    ".cfi_offset rip, -16",
-    ".cfi_offset rbp, -24",
+    cfi!(".cfi_offset rbx, -8"),
+    cfi!(".cfi_offset rip, -16"),
+    cfi!(".cfi_offset rbp, -24"),
+    //
+    // SEH unwind directives (UEFI only)
+    //
+    // These tell the SEH unwinder how to restore the register state to that of
+    // the parent call frame. The SEH unwinder processes these in reverse order:
+    // 1. .seh_setframe rbp, 0: Copy virtual RBP to virtual RSP.
+    // 2. .seh_savereg rsp, 0: Read the parent link and place it in virtual RSP,
+    //    which now points to the top of the parent stack.
+    // 3. .seh_pushreg rbp: Pop and restore RBP from the parent stack.
+    // 4. .seh_stackalloc 8: Skip the saved RIP from the CALL instruction.
+    // 5. .seh_pushreg rbx: Pop and restore RBX from the parent stack.
+    //
+    // After all these operations, the unwinder pops a return address off the
+    // stack. This is the secondary copy of the return address created in
+    // switch_and_link.
+    seh!(".seh_pushreg rbx"),
+    seh!(".seh_stackalloc 8"),
+    seh!(".seh_pushreg rbp"),
+    seh!(".seh_savereg rsp, 0"),
+    seh!(".seh_setframe rbp, 0"),
+    seh!(".seh_endprologue"),
     // Set up the 3rd argument to the initial function to point to the object
     // that init_stack() set up on the stack.
     "mov rdx, rsp",
@@ -234,7 +307,8 @@ global_asm!(
     // the bounds of the function. In any case, this instruction is never
     // executed since the function we are calling never returns.
     "int3",
-    ".cfi_endproc",
+    cfi!(".cfi_endproc"),
+    seh!(".seh_endproc"),
     asm_function_end!("stack_init_trampoline"),
 );
 
@@ -247,7 +321,8 @@ global_asm!(
     // used here.
     ".balign 16",
     asm_function_begin!("stack_call_trampoline"),
-    ".cfi_startproc",
+    cfi!(".cfi_startproc"),
+    seh!(".seh_proc stack_call_trampoline"),
     cfi_signal_frame!(),
     // At this point our register state contains the following:
     // - RSP points to the top of the parent stack.
@@ -259,8 +334,13 @@ global_asm!(
     // Create a stack frame and point the frame pointer at it.
     "push rbp",
     "mov rbp, rsp",
-    ".cfi_def_cfa rbp, 16",
-    ".cfi_offset rbp, -16",
+    // DWARF CFI (non-UEFI)
+    cfi!(".cfi_def_cfa rbp, 16"),
+    cfi!(".cfi_offset rbp, -16"),
+    // SEH (UEFI only)
+    seh!(".seh_pushreg rbp"),
+    seh!(".seh_setframe rbp, 0"),
+    seh!(".seh_endprologue"),
     // Switch to the new stack.
     "mov rsp, rsi",
     // Call the function pointer. The argument is already in the correct
@@ -271,7 +351,8 @@ global_asm!(
     "mov rsp, rbp",
     "pop rbp",
     "ret",
-    ".cfi_endproc",
+    cfi!(".cfi_endproc"),
+    seh!(".seh_endproc"),
     asm_function_end!("stack_call_trampoline"),
 );
 
@@ -331,6 +412,11 @@ pub unsafe fn switch_and_link(
     let (ret_val, ret_sp);
 
     asm_may_unwind_root!(
+        // Set up a secondary copy of the return address. This is only used by
+        // the SEH unwinder on UEFI, not by actual returns.
+        seh!("lea rax, [rip + 2f]"),
+        seh!("push rax"),
+
         // Save RBX. Ideally this would be done by specifying them as a clobber
         // but that is not possible since RBX is an LLVM reserved register.
         //
@@ -365,7 +451,11 @@ pub unsafe fn switch_and_link(
         // instruction. However this doesn't cause any issues in practice.
 
         // Restore RBX.
+        "2:",
         "pop rbx",
+
+        // Pop the secondary return address (UEFI only).
+        seh!("add rsp, 8"),
 
         // The RDI register is specifically chosen to hold the argument since
         // the ABI uses it for the first argument of a function call.
@@ -554,6 +644,11 @@ pub unsafe fn switch_and_throw(
     let (ret_val, ret_sp);
 
     asm_may_unwind_root!(
+        // Set up a secondary copy of the return address for the SEH unwinder
+        // (UEFI only), just like in switch_and_link().
+        seh!("lea rax, [rip + 2f]"),
+        seh!("push rax"),
+
         // Save RBX just like the first half of switch_and_link().
         "push rbx",
 
@@ -597,6 +692,9 @@ pub unsafe fn switch_and_throw(
 
         // Restore registers just like the second half of switch_and_link.
         "pop rbx",
+
+        // Pop the secondary return address (UEFI only).
+        seh!("add rsp, 8"),
 
         // Helper function to trigger stack unwinding.
         throw = sym throw,
