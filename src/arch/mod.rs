@@ -41,13 +41,9 @@ cfg_if::cfg_if! {
                 ""
             };
         }
-        // On UEFI, DWARF CFI is not used (SEH is used instead), so
-        // cfi_signal_frame is a no-op.
-        #[cfg(target_os = "uefi")]
-        macro_rules! cfi_signal_frame {
-            () => { "" }
-        }
-        #[cfg(not(target_os = "uefi"))]
+        // This macro is not used on Windows targets (which use
+        // x86_64_windows.rs) but is used on UEFI targets via x86_64.rs.
+        #[allow(unused_macros)]
         macro_rules! cfi_signal_frame {
             () => { ".cfi_signal_frame" }
         }

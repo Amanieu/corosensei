@@ -192,7 +192,7 @@ global_asm!(
     // *after* the return address to search for unwind information. To avoid
     // issues, any asm! blocks containing a return address that may be unwound
     // into must not have that address at the end of the asm! block.
-    cfi_signal_frame!(),
+    cfi!(cfi_signal_frame!()),
     // This gets called by switch_and_link() the first time a coroutine is
     // resumed, due to the initial state set up by init_stack().
     //
@@ -323,7 +323,7 @@ global_asm!(
     asm_function_begin!("stack_call_trampoline"),
     cfi!(".cfi_startproc"),
     seh!(".seh_proc stack_call_trampoline"),
-    cfi_signal_frame!(),
+    cfi!(cfi_signal_frame!()),
     // At this point our register state contains the following:
     // - RSP points to the top of the parent stack.
     // - RBP holds its value from the parent context.
