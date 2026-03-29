@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4](https://github.com/Amanieu/corosensei/compare/v0.3.3...v0.3.4) - 2026-03-29
+
+### Fixed
+
+- corrent various typos ([#68](https://github.com/Amanieu/corosensei/pull/68))
+
+### Other
+
+- Make `Coroutine::with_stack_unchecked` public ([#74](https://github.com/Amanieu/corosensei/pull/74))
+- Merge pull request #73 from joschock/uefi_seh
+
 ## [0.3.3](https://github.com/Amanieu/corosensei/compare/v0.3.2...v0.3.3) - 2026-02-21
 
 ### Other
