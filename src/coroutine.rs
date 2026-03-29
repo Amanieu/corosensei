@@ -191,7 +191,14 @@ impl<Input, Yield, Return, Stack: stack::Stack> Coroutine<Input, Yield, Return, 
 
     /// Unsafe version of [`Coroutine::with_stack`] without `'static` bounds.
     /// This is used by `ScopedCoroutine`.
-    pub(crate) unsafe fn with_stack_unchecked<F>(stack: Stack, func: F) -> Self
+    ///
+    /// # Safety
+    /// The caller must ensure that all the data borrowed by `func` remains valid
+    /// from the moment the coroutine is created and until it is either driven to completion or dropped.
+    ///
+    /// If the coroutine is forgotten (with [`std::mem::forget`]), the stack memory cannot be reclaimed and reused,
+    /// and the data borrowed by `func` must remain valid indefinitely.
+    pub unsafe fn with_stack_unchecked<F>(stack: Stack, func: F) -> Self
     where
         F: FnOnce(&Yielder<Input, Yield>, Input) -> Return,
     {
