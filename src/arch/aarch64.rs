@@ -125,40 +125,47 @@ global_asm!(
     // Push the X19, X29 and PC values of the parent context onto the parent
     // stack.
     "stp x29, lr, [sp, #-32]!",
-    //
-    // SEH unwind directives (UEFI only)
-    //
-    // Set the frame pointer to the parent stack frame. The trampoline's
-    // prologue executes while SP still points to the parent stack, so FP
-    // records the parent frame address. After the stack switch (which happens
-    // after .seh_endprologue), the unwinder can use FP to locate saved
-    // registers and restore SP directly to the parent stack.
-    //
-    // The SEH unwinder processes these codes in reverse order:
-    // 1. .seh_set_fp: SP = FP (parent stack frame).
-    // 2. .seh_save_reg x19, 16: X19 = [SP + 16].
-    // 3. .seh_save_fplr_x 32: X29 = [SP], LR = [SP + 8], SP += 32.
-    //
-    // After processing, SP = original parent SP, X29/LR/X19 are restored,
-    // and the unwinder sets PC = LR to continue on the parent stack.
-    seh!(".seh_save_fplr_x 32"),
     "str x19, [sp, #16]",
-    seh!(".seh_save_reg x19, 16"),
-    seh!("mov x29, sp"),
-    seh!(".seh_set_fp"),
-    seh!(".seh_endprologue"),
     // Write the parent stack pointer to the parent link and adjust X1 to point
     // to the parent link.
     "mov x3, sp",
     "str x3, [x1, #-16]!",
     // Switch to the coroutine stack and pop the padding and initial PC.
     "add sp, x2, #32",
+    // Set up the frame pointer to point at the parent link. This is needed for
+    // the unwinding code below: the parent link is dynamically updated on each
+    // stack switch so that the unwinder always finds the current parent frame.
+    "mov x29, x1",
+    //
+    // SEH unwind directives (UEFI only)
+    //
+    // The SEH unwinder processes the prologue codes in reverse order to
+    // perform a double indirection through the parent link:
+    // 1. .seh_set_fp:           SP = FP (= parent link pointer).
+    // 2. .seh_save_fplr 0:      X29 = [SP], LR = [SP + 8]. Dereferences the
+    //                           parent link so X29 = parent stack pointer.
+    //                           (LR gets a temporary incorrect value here.)
+    // 3. .seh_set_fp:           SP = X29 (= parent stack frame).
+    // 4. .seh_nop:              No effect.
+    // 5. .seh_save_reg x19, 16: X19 = [SP + 16].
+    // 6. .seh_save_fplr_x 32:  X29 = [SP], LR = [SP + 8], SP += 32.
+    //
+    // After processing, SP = original parent SP, X29/LR/X19 are all correctly
+    // restored (LR's temporary wrong value from step 2 is overwritten in step
+    // 6), and the unwinder sets PC = LR to continue on the parent stack.
+    //
+    // Note: precise unwinding from within the prologue is not possible with
+    // the current trampoline structure, but full-prologue unwind is correct.
+    seh!(".seh_save_fplr_x 32"),
+    seh!(".seh_save_reg x19, 16"),
+    seh!(".seh_nop"),
+    seh!(".seh_set_fp"),
+    seh!(".seh_save_fplr 0"),
+    seh!(".seh_set_fp"),
+    seh!(".seh_endprologue"),
     //
     // DWARF CFI unwind directives (non-UEFI platforms)
     //
-    // Set up the frame pointer to point at the parent link. This is needed for
-    // the DWARF unwinding code below.
-    cfi!("mov x29, x1"),
     // The actual meanings of the magic bytes are:
     // 0x0f: DW_CFA_def_cfa_expression
     // 5: byte length of the following DWARF expression
@@ -186,8 +193,8 @@ global_asm!(
     asm_function_alt_entry!("stack_init_trampoline_return"),
     // This BRK is necessary because of our use of .cfi_signal_frame earlier.
     "brk #0",
-    cfi!(".cfi_endproc"),
     seh!(".seh_endproc"),
+    cfi!(".cfi_endproc"),
     asm_function_end!("stack_init_trampoline"),
 );
 
@@ -208,8 +215,8 @@ global_asm!(
     //
     // Create a stack frame and point the frame pointer at it.
     "stp x29, x30, [sp, #-16]!",
-    seh!(".seh_save_fplr_x 16"),
     "mov x29, sp",
+    seh!(".seh_save_fplr_x 16"),
     seh!(".seh_set_fp"),
     seh!(".seh_endprologue"),
     // DWARF CFI (non-UEFI)
@@ -226,8 +233,8 @@ global_asm!(
     "mov sp, x29",
     "ldp x29, x30, [sp], #16",
     "ret",
-    cfi!(".cfi_endproc"),
     seh!(".seh_endproc"),
+    cfi!(".cfi_endproc"),
     asm_function_end!("stack_call_trampoline"),
 );
 
