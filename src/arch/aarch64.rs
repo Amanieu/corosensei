@@ -80,17 +80,40 @@ use crate::unwind::{
     InitialFunc, StackCallFunc, TrapHandler,
 };
 use crate::util::EncodedValue;
+// The cfi!() and seh!() macros ensure that DWARF CFI and SEH directives are
+// mutually exclusive: UEFI uses SEH (.pdata/.xdata), all other platforms use
+// DWARF CFI (.eh_frame).
+cfg_if::cfg_if! {
+    if #[cfg(target_os = "uefi")] {
+        macro_rules! seh {
+            ($asm:expr) => { $asm }
+        }
+        macro_rules! cfi {
+            ($asm:expr) => { "" }
+        }
+    } else {
+        macro_rules! seh {
+            ($asm:expr) => { "" }
+        }
+        macro_rules! cfi {
+            ($asm:expr) => { $asm }
+        }
+    }
+}
 
 pub const STACK_ALIGNMENT: usize = 16;
 pub const PARENT_STACK_OFFSET: usize = 0;
 pub const PARENT_LINK_OFFSET: usize = 16;
 pub type StackWord = u64;
 
+// On non-UEFI platforms we use DWARF CFI directives. On UEFI we use SEH
+// directives instead (see the seh!() and cfi!() macros above).
 global_asm!(
     ".balign 4",
     asm_function_begin!("stack_init_trampoline"),
-    ".cfi_startproc",
-    cfi_signal_frame!(),
+    cfi!(".cfi_startproc"),
+    seh!(".seh_proc stack_init_trampoline"),
+    cfi!(cfi_signal_frame!()),
     // At this point our register state contains the following:
     // - SP points to the top of the parent stack.
     // - LR contains the return address in the parent context.
@@ -110,21 +133,52 @@ global_asm!(
     // Switch to the coroutine stack and pop the padding and initial PC.
     "add sp, x2, #32",
     // Set up the frame pointer to point at the parent link. This is needed for
-    // the unwinding code below.
+    // the unwinding code below: the parent link is dynamically updated on each
+    // stack switch so that the unwinder always finds the current parent frame.
     "mov x29, x1",
+    //
+    // SEH unwind directives (UEFI only)
+    //
+    // The SEH unwinder processes the prologue codes in reverse order to
+    // perform a double indirection through the parent link:
+    // 1. .seh_set_fp:           SP = FP (= parent link pointer).
+    // 2. .seh_save_fplr 0:      X29 = [SP], LR = [SP + 8]. Dereferences the
+    //                           parent link so X29 = parent stack pointer.
+    //                           (LR gets a temporary incorrect value here.)
+    // 3. .seh_set_fp:           SP = X29 (= parent stack frame).
+    // 4. .seh_nop:              No effect.
+    // 5. .seh_save_reg x19, 16: X19 = [SP + 16].
+    // 6. .seh_save_fplr_x 32:  X29 = [SP], LR = [SP + 8], SP += 32.
+    //
+    // After processing, SP = original parent SP, X29/LR/X19 are all correctly
+    // restored (LR's temporary wrong value from step 2 is overwritten in step
+    // 6), and the unwinder sets PC = LR to continue on the parent stack.
+    //
+    // Note: precise unwinding from within the prologue is not possible with
+    // the current trampoline structure, but full-prologue unwind is correct.
+    seh!(".seh_save_fplr_x 32"),
+    seh!(".seh_save_reg x19, 16"),
+    seh!(".seh_nop"),
+    seh!(".seh_set_fp"),
+    seh!(".seh_save_fplr 0"),
+    seh!(".seh_set_fp"),
+    seh!(".seh_endprologue"),
+    //
+    // DWARF CFI unwind directives (non-UEFI platforms)
+    //
     // The actual meanings of the magic bytes are:
     // 0x0f: DW_CFA_def_cfa_expression
     // 5: byte length of the following DWARF expression
     // 0x8d 0x00: DW_OP_breg29 (x29 + 0)
     // 0x06: DW_OP_deref
     // 0x23, 0x20: DW_OP_plus_uconst 32
-    ".cfi_escape 0x0f, 5, 0x8d, 0x00, 0x06, 0x23, 0x20",
+    cfi!(".cfi_escape 0x0f, 5, 0x8d, 0x00, 0x06, 0x23, 0x20"),
     // Now we can tell the unwinder how to restore the 3 registers that were
     // pushed on the parent stack. These are described as offsets from the CFA
     // that we just calculated.
-    ".cfi_offset x19, -16",
-    ".cfi_offset lr, -24",
-    ".cfi_offset x29, -32",
+    cfi!(".cfi_offset x19, -16"),
+    cfi!(".cfi_offset lr, -24"),
+    cfi!(".cfi_offset x29, -32"),
     // Set up the 3rd argument to the initial function to point to the object
     // that init_stack() set up on the stack.
     "mov x2, sp",
@@ -139,7 +193,8 @@ global_asm!(
     asm_function_alt_entry!("stack_init_trampoline_return"),
     // This BRK is necessary because of our use of .cfi_signal_frame earlier.
     "brk #0",
-    ".cfi_endproc",
+    seh!(".seh_endproc"),
+    cfi!(".cfi_endproc"),
     asm_function_end!("stack_init_trampoline"),
 );
 
@@ -148,8 +203,9 @@ global_asm!(
     // used here.
     ".balign 4",
     asm_function_begin!("stack_call_trampoline"),
-    ".cfi_startproc",
-    cfi_signal_frame!(),
+    cfi!(".cfi_startproc"),
+    seh!(".seh_proc stack_call_trampoline"),
+    cfi!(cfi_signal_frame!()),
     // At this point our register state contains the following:
     // - SP points to the top of the parent stack.
     // - X29 holds its value from the parent context.
@@ -160,9 +216,13 @@ global_asm!(
     // Create a stack frame and point the frame pointer at it.
     "stp x29, x30, [sp, #-16]!",
     "mov x29, sp",
-    ".cfi_def_cfa x29, 16",
-    ".cfi_offset x30, -8",
-    ".cfi_offset x29, -16",
+    seh!(".seh_save_fplr_x 16"),
+    seh!(".seh_set_fp"),
+    seh!(".seh_endprologue"),
+    // DWARF CFI (non-UEFI)
+    cfi!(".cfi_def_cfa x29, 16"),
+    cfi!(".cfi_offset x30, -8"),
+    cfi!(".cfi_offset x29, -16"),
     // Switch to the new stack.
     "mov sp, x1",
     // Call the function pointer. The argument is already in the correct
@@ -173,7 +233,8 @@ global_asm!(
     "mov sp, x29",
     "ldp x29, x30, [sp], #16",
     "ret",
-    ".cfi_endproc",
+    seh!(".seh_endproc"),
+    cfi!(".cfi_endproc"),
     asm_function_end!("stack_call_trampoline"),
 );
 
