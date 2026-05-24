@@ -305,6 +305,15 @@ pub unsafe fn switch_and_link(
         lateout("18") _, lateout("19") _, lateout("20") _, lateout("21") _,
         lateout("22") _, lateout("23") _, lateout("24") _, lateout("25") _,
         lateout("26") _, lateout("27") _, lateout("28") _, lateout("29") _,
+        lateout("f14") _, lateout("f15") _, lateout("f16") _, lateout("f17") _,
+        lateout("f18") _, lateout("f19") _, lateout("f20") _, lateout("f21") _,
+        lateout("f22") _, lateout("f23") _, lateout("f24") _, lateout("f25") _,
+        lateout("f26") _, lateout("f27") _, lateout("f28") _, lateout("f29") _,
+        lateout("f30") _, lateout("f31") _,
+        lateout("v20") _, lateout("v21") _, lateout("v22") _, lateout("v23") _,
+        lateout("v24") _, lateout("v25") _, lateout("v26") _, lateout("v27") _,
+        lateout("v28") _, lateout("v29") _, lateout("v30") _, lateout("v31") _,
+        lateout("cr2") _, lateout("cr3") _, lateout("cr4") _,
         clobber_abi("C"),
     );
 
@@ -401,6 +410,15 @@ pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) ->
         lateout("18") _, lateout("19") _, lateout("20") _, lateout("21") _,
         lateout("22") _, lateout("23") _, lateout("24") _, lateout("25") _,
         lateout("26") _, lateout("27") _, lateout("28") _, lateout("29") _,
+        lateout("f14") _, lateout("f15") _, lateout("f16") _, lateout("f17") _,
+        lateout("f18") _, lateout("f19") _, lateout("f20") _, lateout("f21") _,
+        lateout("f22") _, lateout("f23") _, lateout("f24") _, lateout("f25") _,
+        lateout("f26") _, lateout("f27") _, lateout("f28") _, lateout("f29") _,
+        lateout("f30") _, lateout("f31") _,
+        lateout("v20") _, lateout("v21") _, lateout("v22") _, lateout("v23") _,
+        lateout("v24") _, lateout("v25") _, lateout("v26") _, lateout("v27") _,
+        lateout("v28") _, lateout("v29") _, lateout("v30") _, lateout("v31") _,
+        lateout("cr2") _, lateout("cr3") _, lateout("cr4") _,
         clobber_abi("C"),
     );
 
@@ -516,6 +534,15 @@ pub unsafe fn switch_and_throw(
         lateout("18") _, lateout("19") _, lateout("20") _, lateout("21") _,
         lateout("22") _, lateout("23") _, lateout("24") _, lateout("25") _,
         lateout("26") _, lateout("27") _, lateout("28") _, lateout("29") _,
+        lateout("f14") _, lateout("f15") _, lateout("f16") _, lateout("f17") _,
+        lateout("f18") _, lateout("f19") _, lateout("f20") _, lateout("f21") _,
+        lateout("f22") _, lateout("f23") _, lateout("f24") _, lateout("f25") _,
+        lateout("f26") _, lateout("f27") _, lateout("f28") _, lateout("f29") _,
+        lateout("f30") _, lateout("f31") _,
+        lateout("v20") _, lateout("v21") _, lateout("v22") _, lateout("v23") _,
+        lateout("v24") _, lateout("v25") _, lateout("v26") _, lateout("v27") _,
+        lateout("v28") _, lateout("v29") _, lateout("v30") _, lateout("v31") _,
+        lateout("cr2") _, lateout("cr3") _, lateout("cr4") _,
         clobber_abi("C"),
     );
 
