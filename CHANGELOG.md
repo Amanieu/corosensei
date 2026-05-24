@@ -9,16 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.4](https://github.com/Amanieu/corosensei/compare/v0.3.3...v0.3.4) - 2026-05-24
 
+### Added
+
+- Added SEH unwind support for x86_64 UEFI target ([#73](https://github.com/Amanieu/corosensei/pull/73))
+- Added SEH unwind support for aarch64 UEFI target ([#75](https://github.com/Amanieu/corosensei/pull/75))
+- Made `Coroutine::with_stack_unchecked` public ([#74](https://github.com/Amanieu/corosensei/pull/74))
+
 ### Fixed
 
-- corrent various typos ([#68](https://github.com/Amanieu/corosensei/pull/68))
-
-### Other
-
-- Fix clobbers on PowerPC to include all non-volatile registers ([#77](https://github.com/Amanieu/corosensei/pull/77))
-- Add SEH for aarch64 UEFI target ([#75](https://github.com/Amanieu/corosensei/pull/75))
-- Make `Coroutine::with_stack_unchecked` public ([#74](https://github.com/Amanieu/corosensei/pull/74))
-- Merge pull request #73 from joschock/uefi_seh
+- Fixed clobbers on PowerPC to include all non-volatile registers ([#77](https://github.com/Amanieu/corosensei/pull/77))
 
 ## [0.3.3](https://github.com/Amanieu/corosensei/compare/v0.3.2...v0.3.3) - 2026-02-21
 
