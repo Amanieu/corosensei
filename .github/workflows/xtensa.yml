@@ -1,0 +1,111 @@
+# Optional CI for Xtensa (ESP32, ESP32-S2, ESP32-S3).
+#
+# Upstream rustc can't build Xtensa, so this uses the esp-rs toolchain
+# container and runs the test runner in ci/xtensa under Espressif's QEMU fork.
+# It only runs when triggered manually. To run it on every push/PR touching the
+# relevant code, uncomment the triggers below.
+name: Xtensa
+
+on:
+  workflow_dispatch:
+  # push:
+  #   branches: [master]
+  #   paths: ["src/**", "ci/xtensa/**", ".github/workflows/xtensa.yml"]
+  # pull_request:
+  #   paths: ["src/**", "ci/xtensa/**", ".github/workflows/xtensa.yml"]
+
+env:
+  CARGO_TERM_COLOR: always
+  # Espressif QEMU release providing the esp32 and esp32s3 machines.
+  QEMU_RELEASE: esp-develop-9.2.2-20260417
+  QEMU_ARCHIVE: qemu-xtensa-softmmu-esp_develop_9.2.2_20260417-x86_64-linux-gnu.tar.xz
+  ESPFLASH_SKIP_UPDATE_CHECK: "true"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Build the library for every Xtensa target, in debug and release (the
+  # latter with the default codegen units, i.e. local ThinLTO).
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf-rust:all_1.95.0.0
+      options: --user root
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - xtensa-esp32-none-elf
+          - xtensa-esp32s2-none-elf
+          - xtensa-esp32s3-none-elf
+        profile: [dev, release]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up the esp-rs toolchain
+        run: ci/xtensa/gha-env.sh
+      - name: Build (no_std)
+        run: cargo +esp build -Zbuild-std=core --target ${{ matrix.target }} --profile ${{ matrix.profile }} --no-default-features
+      - name: Build the test runner
+        run: |
+          chip=$(echo ${{ matrix.target }} | sed 's/xtensa-\(.*\)-none-elf/\1/')
+          cd ci/xtensa
+          cargo +esp build --target ${{ matrix.target }} --profile ${{ matrix.profile }} --features $chip
+
+  # The ESP-IDF targets provide std. Only check that the crate builds there.
+  build-espidf:
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf-rust:all_1.95.0.0
+      options: --user root
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up the esp-rs toolchain
+        run: ci/xtensa/gha-env.sh
+      - name: Build (std, unwind feature)
+        run: cargo +esp build -Zbuild-std=std,panic_abort --target xtensa-esp32s3-espidf --release --no-default-features --features unwind
+
+  # Run the test suite under QEMU.
+  qemu:
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf-rust:all_1.95.0.0
+      options: --user root
+    strategy:
+      fail-fast: false
+      matrix:
+        chip: [esp32, esp32s3]
+        profile: [dev, release]
+        rustflags: [""]
+        include:
+          # a7 is the frame pointer under the windowed ABI and must survive
+          # switches.
+          - chip: esp32
+            profile: release
+            rustflags: "-C force-frame-pointers=yes"
+          - chip: esp32s3
+            profile: release
+            rustflags: "-C force-frame-pointers=yes"
+          # The ESP32-S2's register options (no FPU, loop, boolean or MAC16),
+          # since QEMU has no ESP32-S2 machine.
+          - chip: esp32
+            profile: release
+            rustflags: "-C target-feature=-fp,-loop,-bool,-mac16"
+          - chip: esp32
+            profile: dev
+            rustflags: "-C target-feature=-fp,-loop,-bool,-mac16"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up the esp-rs toolchain
+        run: ci/xtensa/gha-env.sh
+      - name: Install Espressif QEMU
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends curl xz-utils libslirp0 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libgcrypt20
+          curl -sSL "https://github.com/espressif/qemu/releases/download/$QEMU_RELEASE/$QEMU_ARCHIVE" | tar -xJ -C /opt
+          echo "QEMU=/opt/qemu/bin/qemu-system-xtensa" >> "$GITHUB_ENV"
+      - name: Run tests
+        env:
+          EXTRA_RUSTFLAGS: ${{ matrix.rustflags }}
+        run: ci/xtensa/run-qemu.sh ${{ matrix.chip }} ${{ matrix.profile }}
