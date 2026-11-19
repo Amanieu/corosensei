@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added Xtensa support for the ESP32, ESP32-S2 and ESP32-S3 (windowed ABI). Requires the esp-rs toolchain.
+
 ## [0.3.4](https://github.com/Amanieu/corosensei/compare/v0.3.3...v0.3.4) - 2026-05-24
 
 ### Added

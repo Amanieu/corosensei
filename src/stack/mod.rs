@@ -11,7 +11,12 @@ use crate::sanitizer::SanitizerFiber;
 pub mod valgrind;
 
 cfg_if::cfg_if! {
-    if #[cfg(all(feature = "default-stack", unix))] {
+    if #[cfg(all(feature = "default-stack", target_os = "espidf"))] {
+        compile_error!(
+            "the `default-stack` feature is not supported on ESP-IDF, which has no mmap: \
+             disable default features and use a custom `Stack` implementation"
+        );
+    } else if #[cfg(all(feature = "default-stack", unix))] {
         mod unix;
         pub use self::unix::DefaultStack;
     } else if #[cfg(all(feature = "default-stack", windows))] {

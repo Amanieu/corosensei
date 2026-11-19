@@ -108,6 +108,8 @@ cfg_if::cfg_if! {
                 concat!(".size ", asm_mangle!($name), ", . - ", asm_mangle!($name), "\n")
             };
         }
+        // Not used on Xtensa, which doesn't use DWARF CFI for unwinding.
+        #[allow(unused_macros)]
         macro_rules! cfi_signal_frame {
             () => { ".cfi_signal_frame" }
         }
@@ -173,6 +175,9 @@ cfg_if::cfg_if! {
     } else if #[cfg(all(target_arch = "powerpc64", target_abi = "elfv2", not(windows)))] {
         mod powerpc64;
         pub use self::powerpc64::*;
+    } else if #[cfg(target_arch = "xtensa")] {
+        mod xtensa;
+        pub use self::xtensa::*;
     } else {
         compile_error!("Unsupported target");
     }
@@ -180,6 +185,7 @@ cfg_if::cfg_if! {
 
 /// Helper function to push a value onto a stack.
 #[inline]
+#[cfg_attr(target_arch = "xtensa", allow(dead_code))]
 unsafe fn push(sp: &mut usize, val: Option<StackWord>) {
     *sp -= mem::size_of::<StackWord>();
     if let Some(val) = val {

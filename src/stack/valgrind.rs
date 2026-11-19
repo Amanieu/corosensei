@@ -104,6 +104,14 @@ cfg_if::cfg_if! {
         unsafe fn valgrind_request(default: Value, _args: &[Value; 6]) -> Value {
             default
         }
+    } else if #[cfg(target_arch = "xtensa")] {
+        type Value = usize;
+
+        // Valgrind doesn't support Xtensa, use a no-op.
+        #[inline]
+        unsafe fn valgrind_request(default: Value, _args: &[Value; 6]) -> Value {
+            default
+        }
     } else {
         compile_error!("Unsupported target");
     }
