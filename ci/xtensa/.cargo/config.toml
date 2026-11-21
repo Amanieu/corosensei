@@ -4,6 +4,3 @@ rustflags = ["-C", "link-arg=-nostartfiles", "-C", "link-arg=-Tlinkall.x", "-C",
 [unstable]
 build-std = ["core", "alloc"]
 
-[env]
-# Enough frames for the backtrace tests to reach the parent context.
-ESP_BACKTRACE_CONFIG_BACKTRACE_FRAMES = "32"

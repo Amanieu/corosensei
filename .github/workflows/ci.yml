@@ -100,3 +100,40 @@ jobs:
         # PowerPC inline asm is still unstable
         - target: powerpc64le-unknown-linux-gnu
           channel: stable
+
+  # Xtensa needs the esp-rs toolchain. Tests run under Espressif's QEMU, which
+  # has no ESP32-S2 machine, so the ESP32-S2 is only built.
+  xtensa:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        chip: [esp32, esp32s2, esp32s3]
+        profile: [dev, release]
+    env:
+      TARGET: xtensa-${{ matrix.chip }}-none-elf
+      OUT: target/xtensa-${{ matrix.chip }}-none-elf/${{ matrix.profile == 'dev' && 'debug' || 'release' }}
+      ESPFLASH_SKIP_UPDATE_CHECK: "true"
+    steps:
+    - uses: actions/checkout@v4
+    - uses: esp-rs/xtensa-toolchain@v1.7
+      with:
+        buildtargets: ${{ matrix.chip }}
+    - name: Install espflash and QEMU
+      run: |
+        sudo apt-get update && sudo apt-get install -y libpixman-1-0 libsdl2-2.0-0 libslirp0 libgcrypt20
+        curl -sSfLo /tmp/espflash.zip https://github.com/esp-rs/espflash/releases/download/v4.7.0/espflash-x86_64-unknown-linux-gnu.zip
+        unzip /tmp/espflash.zip -d ~/.cargo/bin
+        curl -sSfL https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20260417/qemu-xtensa-softmmu-esp_develop_9.2.2_20260417-x86_64-linux-gnu.tar.xz | tar -xJ -C ~
+        echo ~/qemu/bin >> $GITHUB_PATH
+    - name: Build for ESP-IDF (std)
+      if: matrix.chip == 'esp32s3'
+      run: cargo +esp build -Zbuild-std=std,panic_abort --target xtensa-esp32s3-espidf --profile ${{ matrix.profile }} --no-default-features --features unwind
+    - name: Test
+      working-directory: ci/xtensa
+      run: |
+        cargo +esp build --target $TARGET --profile ${{ matrix.profile }} --features ${{ matrix.chip }}
+        if [ ${{ matrix.chip }} != esp32s2 ]; then
+          espflash save-image --chip ${{ matrix.chip }} --merge --flash-size 4mb $OUT/corosensei-xtensa-tests flash.bin
+          timeout 900 qemu-system-xtensa -nographic -semihosting -machine ${{ matrix.chip }} -drive file=flash.bin,if=mtd,format=raw
+        fi

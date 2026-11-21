@@ -114,7 +114,7 @@ Known limitations on Xtensa:
 - Context switches must not be performed from interrupt or exception handlers, where window overflow exceptions are disabled.
 - Only the registers of the Xtensa ABI are switched. The ESP32-S3 vector extension (`q0`-`q7`, `ACCX`, ...) state and the FPU control/status registers `FCR`/`FSR` are shared between coroutines, like other global state.
 
-The tests for Xtensa run on hardware or under Espressif's QEMU fork with a separate test runner, see [`ci/xtensa`](ci/xtensa/README.md).
+The Xtensa tests in [`ci/xtensa`](ci/xtensa/src/main.rs) run under Espressif's QEMU fork in CI.
 
 ## Features
 

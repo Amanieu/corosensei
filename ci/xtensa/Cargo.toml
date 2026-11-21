@@ -13,10 +13,9 @@ corosensei = { path = "../..", default-features = false }
 # init, which Espressif's QEMU doesn't emulate. Stay on the 1.0 release train.
 esp-hal = { version = "=1.0.0", features = ["unstable"] }
 esp-alloc = "=0.9.0"
-esp-backtrace = { version = "=0.18.1", features = ["panic-handler", "println"] }
+esp-backtrace = { version = "=0.18.1", features = ["panic-handler", "println", "custom-halt"] }
 esp-bootloader-esp-idf = "=0.4.0"
-esp-println = { version = "=0.16.1", default-features = false, features = ["uart", "critical-section", "colors"] }
-critical-section = "1.2.0"
+esp-println = { version = "=0.16.1", default-features = false, features = ["uart", "critical-section"] }
 xtensa-lx-rt = "=0.21.0"
 
 [features]
