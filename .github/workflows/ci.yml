@@ -119,6 +119,8 @@ jobs:
     - uses: esp-rs/xtensa-toolchain@v1.7
       with:
         buildtargets: ${{ matrix.chip }}
+        version: 1.97.0.0
+        github-token: ${{ secrets.GITHUB_TOKEN }}
     - name: Install espflash and QEMU
       run: |
         sudo apt-get update && sudo apt-get install -y libpixman-1-0 libsdl2-2.0-0 libslirp0 libgcrypt20
