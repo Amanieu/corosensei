@@ -77,8 +77,8 @@ fn rearm(period: u32) {
 extern "C" fn Timer0(_: &mut xtensa_lx_rt::exception::Context) {
     let n = IRQS.load(Relaxed) + 1;
     IRQS.store(n, Relaxed); // No atomic RMW on the ESP32-S2.
-    rearm(600 + (n.wrapping_mul(2_654_435_761) >> 23) % 511);
     nest(24, &mut |d| d); // Spill the interrupted code's windows.
+    rearm(600 + (n.wrapping_mul(2_654_435_761) >> 23) % 511); // Last, so the tests progress.
 }
 
 #[esp_hal::main]
