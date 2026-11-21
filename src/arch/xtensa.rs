@@ -1,182 +1,51 @@
-//! Low-level Xtensa support (windowed ABI).
+//! Low-level Xtensa support (ESP32, ESP32-S2 and ESP32-S3).
 //!
-//! This targets the Xtensa cores used in Espressif's ESP32, ESP32-S2 and
-//! ESP32-S3 chips. All Rust Xtensa targets use the *windowed* register ABI
-//! (`call4`/`call8`/`call12`, `entry`, `retw`), which makes context switching
-//! quite different from the other architectures. Refer to x86_64.rs for an
-//! overview of the operations implemented in this file and of the linked stack
-//! concept.
+//! Refer to x86_64.rs for detailed comments about the operations implemented
+//! in this file. Xtensa targets use the *windowed* register ABI, which makes
+//! context switching quite different, so the relevant differences are
+//! described here.
 //!
 //! ## Register windows
 //!
-//! The processor has 64 physical address registers (AR), of which 16 (`a0`-
-//! `a15`) are visible at any time. A `callN` rotates the visible window by `N`
-//! registers when the callee executes `entry`, and `retw` rotates it back. The
-//! `WindowStart` special register has one bit per group of 4 physical
-//! registers marking where a live frame starts, and `WindowBase` points to the
-//! current frame.
+//! A `callN` + `entry` rotates the 16 visible registers by `N` within a file of
+//! 64 physical registers, and `retw` rotates them back. Frames of callers may
+//! still be held in registers. They are saved to the stack lazily by window
+//! overflow exceptions, into the 16-byte *base save area* below the stack
+//! pointer of the frame they called, and reloaded by window underflow
+//! exceptions on `retw`.
 //!
-//! When a call would reuse physical registers still owned by an older frame,
-//! the hardware raises a *window overflow* exception and the handler saves
-//! that frame to its stack. When `retw` returns to a frame whose registers are
-//! no longer in the register file, a *window underflow* exception reloads them.
-//! The handlers use two save areas:
+//! All switches go through `stack_switch`, called with `call4`. It spills every
+//! other live window with `stack_window_spill`, a chain of 4 `call12`s which
+//! touches all 15 other window positions and lets the normal overflow handlers
+//! save any live frame. This needs no privileged instructions and every
+//! intermediate state is a valid call chain, so interrupts are never masked.
+//! It then loads the target stack pointer and executes `retw`. Since the
+//! caller's window is no longer live, this triggers a window underflow which
+//! reloads the caller's `a0`-`a3` from the target stack.
 //!
-//! - **Base save area:** the 16 bytes immediately below the stack pointer of a
-//!   frame hold the `a0`-`a3` of that frame's *caller*.
-//! - **Extra save area:** a frame which made a `call8`/`call12` keeps its
-//!   `a4`-`a7`/`a4`-`a11` at the top of its own stack frame, just below the base
-//!   save area of its caller's caller.
-//!
-//! A frame's caller may therefore be partially or entirely held in registers
-//! rather than on the stack. Before switching to another stack every live
-//! window must be spilled, otherwise a later window underflow would reload
-//! stale register contents.
-//!
-//! ## Switching stacks
-//!
-//! All stack switches go through `stack_switch`, which is called with `call4`
-//! from the inline assembly in `switch_and_link`, `switch_yield` and
-//! `switch_and_reset`. It:
-//!
-//! 1. Saves its own return address (`a0`) and its `a3` (the caller's `a7`, see
-//!    below) at the bottom of its own stack frame.
-//! 2. Spills every other live register window with `stack_window_spill`.
-//!    Afterwards `WindowStart` only has the bit for `stack_switch` itself,
-//!    and every caller frame's registers are in their save areas on the
-//!    current stack.
-//! 3. Loads the target stack pointer into `a1` and reloads `a0`/`a3` from the
-//!    `stack_switch` frame saved on that stack.
-//! 4. Executes `retw`. Since the caller window is not live, this triggers a
-//!    window underflow which reloads the caller frame's `a0`-`a3` from the base
-//!    save area of the *target* stack. Execution continues in the target
-//!    context exactly as if its own call to `stack_switch` had returned.
-//!
-//! The target context therefore restarts with a clean window state: only the
-//! current frame is live, and everything else comes back from its stack on
-//! demand through the normal underflow mechanism.
-//!
-//! ### Spilling register windows
-//!
-//! `stack_window_spill` uses the classic `call12` chain: 4 nested `call12`
-//! calls rotate the window by 12 registers each, and the innermost function
-//! then references `a15`. Together these touch every one of the 15 window
-//! positions after the frame of `stack_switch`, so any older live frame
-//! triggers a window overflow and is saved to its stack by the standard
-//! window overflow handlers. The chain frames themselves are never spilled
-//! since they don't wrap around to `stack_switch`, so they return without any
-//! underflow.
-//!
-//! This approach was chosen over a `WindowStart`/`WindowBase`-driven `rotw`
-//! loop because every intermediate state is an ordinary, valid call chain:
-//!
-//! - It doesn't need to mask interrupts. An interrupt or window exception
-//!   arriving during the spill sees normal frames and is handled normally.
-//! - It doesn't need privileged instructions (`rotw`, writing
-//!   `WindowStart`).
-//! - It needs no knowledge of the window exception handlers beyond the
-//!   standard save-area layout.
-//!
-//! It assumes 64 physical address registers, which is the configuration of all
-//! ESP32, ESP32-S2 and ESP32-S3 cores.
+//! Switching must not be done with `PS.EXCM` set (e.g. from an interrupt
+//! handler) or `PS.WOE` cleared, since window overflows are not taken then.
 //!
 //! ## Register save set
 //!
-//! The windowed ABI has no callee-saved registers in the usual sense: a
-//! `call4` preserves the caller's `a0`-`a3` through the window mechanism and
-//! clobbers `a4`-`a15`. The inline assembly therefore:
-//!
-//! - relies on the window underflow to restore `a0`-`a3` of the resumed frame;
-//! - declares `a4`-`a15` as clobbered, except `a7`. `a7` is the frame pointer
-//!   under LLVM's windowed ABI, and LLVM silently ignores clobbers of the frame
-//!   pointer, so `stack_switch` saves and restores it (its own `a3`)
-//!   explicitly;
-//! - declares as clobbered every caller-saved special register that the
-//!   compiler knows about: `SAR`, the zero-overhead loop registers
-//!   `LBEG`/`LEND`/`LCOUNT`, the boolean registers `b0`-`b15`, the MAC16
-//!   registers, `SCOMPARE1` and the floating-point registers `f0`-`f15`. All
-//!   of them are caller-saved in the Xtensa ABI. Clobbering them lets the
-//!   compiler save only what is actually live across a switch. Each group is
-//!   gated on the corresponding target feature (`fp`, `loop`, `bool`, `mac16`,
-//!   `s32c1i`), so `cfg(target_feature)` is how FPU support is detected. The
-//!   ESP32 and ESP32-S3 have the single-precision FPU and the ESP32-S2 does
-//!   not.
-//!
-//! `clobber_abi("C")` is deliberately not used. The esp-rs compiler implements
-//! it with the call0 ABI clobber set, which includes `a7` but not `a12`-`a15`.
-//! It also lists registers which don't exist on targets without the FPU,
-//! loop, boolean, MAC16 or S32C1I options, and fails to compile there (ESP32-S2).
-//!
-//! Global state which is not part of the ABI's register save set is not
-//! switched: the `FCR`/`FSR` floating-point control and status registers, as
-//! with the FP control registers on other architectures, `THREADPTR`, and
-//! the ESP32-S3 vector/TIE extension state (`q0`-`q7`, `ACCX`, ...), which the
-//! compiler never allocates.
-//!
-//! Zero-overhead loops can't be live across a switch: the loop registers are
-//! declared as clobbered, so LLVM can't keep a hardware loop active across the
-//! inline assembly. In practice the esp-rs LLVM doesn't generate zero-overhead
-//! loops at all. A switch also doesn't need to clear a stale `LCOUNT`: a loop
-//! only branches back when execution reaches `LEND` sequentially, which can only
-//! happen inside the loop body that set it up.
-//!
-//! ## Toolchain requirements
-//!
-//! Xtensa requires the esp-rs compiler, version 1.93 or later (for `cfg` on
-//! inline assembly operands).
-//!
-//! The assembly routines (`stack_switch`, `stack_window_spill` and the
-//! trampolines) are emitted from inline assembly in a dedicated function rather
-//! than with `global_asm!`. Rust <= 1.98 (LLVM <= 22) parses module-level
-//! assembly without the target's features in optimized builds with multiple
-//! codegen units, as part of local ThinLTO. On Xtensa this rejects even the
-//! windowed ABI instructions themselves, not only FPU or other optional
-//! instructions.
-//!
-//! ## Interrupts and exceptions
-//!
-//! Switching never masks interrupts and is safe against interrupts and window
-//! exceptions at any point: every intermediate state is either a valid call
-//! chain or the result of a completed spill. The 16 bytes below the stack
-//! pointer always hold the base save area of the current frame's caller, as
-//! the ABI requires.
-//!
-//! However, a context switch must not be performed from an interrupt or
-//! exception handler, or more generally with `PS.EXCM` set or `PS.WOE`
-//! cleared. In that state window overflow exceptions are not taken, so the
-//! window spill would not work.
+//! `a0`-`a3` are restored by the window underflow. `a4`-`a15` and every
+//! caller-saved special register known to the compiler (`SAR`, the loop,
+//! boolean, MAC16 and FP registers, `SCOMPARE1`) are declared as clobbered,
+//! each group gated on its target feature. `a7` is the frame pointer, whose
+//! clobbers LLVM silently ignores, so `stack_switch` saves it explicitly.
 //!
 //! ## Backtraces and unwinding
 //!
-//! Xtensa targets are `panic = "abort"` and Xtensa debuggers and backtrace
-//! code walk the stack using the windowed ABI's base save areas rather than
-//! DWARF CFI. Therefore the `asm-unwind` feature is not supported, and the
-//! `unwind` feature can only be enabled with `std` and has no effect on the
-//! behavior of panics.
-//!
-//! To still allow backtraces to continue from a coroutine into its parent,
-//! the base save area chain is linked from the coroutine stack to the parent
-//! stack. A walker (e.g. `esp-backtrace` or ESP-IDF) computes the next frame
-//! as `pc = *(sp - 16)` and `sp = *(sp - 12)`. Each time a coroutine is
-//! resumed, `stack_switch_link` stores the parent's suspended stack pointer
-//! (the parent link) and its return address just below the stack base. A
-//! pseudo-frame record below the initial object then points the walk at
-//! these two words:
-//!
-//! ```text
-//! coroutine frames -> stack_init_trampoline -> (link pseudo-frame)
-//!     -> stack_switch (parent) -> parent frames ...
-//! ```
-//!
-//! `on_stack` similarly copies its caller's `a0`/`a1` below the new stack's
-//! base so walks continue back onto the original stack.
+//! Xtensa backtraces walk the base save areas rather than DWARF CFI, so the
+//! `asm-unwind` feature is not supported. To continue backtraces into the
+//! parent, `stack_switch_link` stores the parent's stack pointer and return
+//! address below the stack base on every resume, and a pseudo-frame record
+//! below the initial object points the walk at them.
 //!
 //! ## Stack layout
 //!
 //! Here is what the layout of the stack looks like when a coroutine is
-//! suspended. `stack_switch` frames are 64 bytes: the saved `a0` and `a3` at
-//! the bottom, the `call12` extra save area and the base save area of the
-//! caller's caller at the top.
+//! suspended. The parent stack looks the same while a coroutine is running.
 //!
 //! ```text
 //! +-----------------+  <- Stack base
@@ -184,38 +53,32 @@
 //! +-----------------+
 //! | Padding         |
 //! +-----------------+
-//! | Parent link     |  <- Points to the stack_switch frame on the parent
-//! +-----------------+     stack while the coroutine is running.
-//! | Parent PC       |  <- Return address of the parent's stack_switch call
+//! | Parent link     |
+//! +-----------------+
+//! | Parent PC       |
 //! +-----------------+
 //! |                 |
-//! ~      ...        ~  <- Frames of the suspended coroutine, all spilled.
+//! ~      ...        ~
 //! |                 |
-//! +-----------------+  <- Stack pointer of the frame which called stack_switch
-//! | a0-a3 of the    |  <- Spilled by the window overflow handler.
+//! +-----------------+
+//! | a0-a3 of the    |
 //! | caller's caller |
 //! +-----------------+
-//! | Extra save area |  <- 32 bytes, only used if stack_switch itself is spilled
-//! +-----------------+     while it calls stack_window_spill.
+//! | Extra save area |
+//! +-----------------+
 //! | Padding         |
 //! +-----------------+
 //! | Saved a3 (a7)   |
 //! +-----------------+
 //! | Saved a0 (PC)   |
 //! +-----------------+  <- Saved stack pointer (stack_switch frame)
-//! | a0-a3 of the    |  <- Reloaded by the window underflow on resume.
+//! | a0-a3 of the    |
 //! | caller          |
 //! +-----------------+
 //! ```
 //!
-//! And this is the layout of the parent stack when a coroutine is running.
-//! It is identical to a suspended coroutine; the parent link points to the
-//! saved stack pointer.
-//!
-//! And finally, this is the stack layout of a coroutine that has just been
-//! initialized. The first `stack_switch` into it "returns" into
-//! `stack_init_trampoline`, whose initial `a0`-`a3` are loaded from the base
-//! save area by the window underflow.
+//! And this is the stack layout of a coroutine that has just been initialized.
+//! The first switch into it "returns" into `stack_init_trampoline`.
 //!
 //! ```text
 //! +-----------------+  <- Stack base
@@ -230,31 +93,30 @@
 //! |                 |
 //! ~ Initial obj     ~
 //! |                 |
-//! +-----------------+  <- Trampoline stack pointer (a1)
+//! +-----------------+  <- Trampoline stack pointer
 //! | Padding         |
 //! +-----------------+
 //! | Padding         |
 //! +-----------------+
-//! | Link SP         |  <- Stack base. Used by backtraces to find the parent.
+//! | Link SP         |
 //! +-----------------+
-//! | Link PC         |  <- Address of stack_switch_suspended.
+//! | Link PC         |
 //! +-----------------+
 //! |                 |
 //! ~ Padding         ~
 //! |                 |
 //! +-----------------+
-//! | Parent link ptr |  <- Restored as a3 by stack_switch, becomes a7 of the
-//! +-----------------+     trampoline.
-//! | Initial PC      |  <- stack_init_trampoline, with the call4 window
-//! |                 |     increment in the top bits.
+//! | Parent link ptr |
+//! +-----------------+
+//! | Initial PC      |
 //! +-----------------+  <- Initial stack pointer
 //! | Trampoline a3   |
 //! +-----------------+
-//! | Initial func    |  <- Trampoline a2
+//! | Initial func    |
 //! +-----------------+
-//! | Trampoline SP   |  <- Trampoline a1
+//! | Trampoline SP   |
 //! +-----------------+
-//! | Trampoline PC   |  <- Trampoline a0, only used by backtraces.
+//! | Trampoline PC   |
 //! +-----------------+
 //! ```
 
@@ -527,6 +389,10 @@ unsafe fn write_parent_link_record(sp: usize, stack_base: usize) {
 ///
 /// a0-a3 are preserved by the window mechanism, a7 is preserved explicitly, and
 /// a6, a8, a9 and a12 are used as operands by the callers of this macro.
+///
+/// `clobber_abi("C")` is not used: the esp-rs compiler implements it with the
+/// call0 ABI clobber set, which misses a12-a15, and it fails to compile on
+/// targets without the FP, loop, boolean or MAC16 options (ESP32-S2).
 macro_rules! asm_switch {
     ($($asm:tt)*) => {
         asm!(
