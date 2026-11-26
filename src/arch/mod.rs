@@ -186,3 +186,94 @@ unsafe fn push(sp: &mut usize, val: Option<StackWord>) {
         *(*sp as *mut StackWord) = val;
     }
 }
+
+/// Callee-saved x86_64 floating-point control state (MXCSR + x87 FCW), packed
+/// into a `u64` as `(fcw << 32) | mxcsr`.
+///
+/// Both the System V AMD64 ABI and the Windows x64 ABI classify the MXCSR
+/// control bits (bits 6..=15) and the x87 control word as callee-saved, so
+/// `clobber_abi` does not cause the compiler to preserve them around inline
+/// assembly.
+///
+/// On soft-float x86_64 targets (e.g. `x86_64-unknown-none`, `x86_64-unknown-uefi`
+/// without SSE), this is a no-op so we never emit SSE/x87 instructions.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy)]
+struct FpControlState(u64);
+
+#[cfg(all(target_arch = "x86_64", target_feature = "sse"))]
+impl FpControlState {
+    /// Mask of callee-saved bits in the packed `(fcw << 32) | mxcsr` layout:
+    /// MXCSR bits 0..=5 are volatile exception status flags, while MXCSR
+    /// control bits (bits 6..=15) and all 16 bits of the x87 control word are
+    /// callee-saved.
+    const CONTROL_MASK: u64 = 0x0000_ffff_ffff_ffc0;
+
+    #[inline(always)]
+    unsafe fn read() -> Self {
+        // Store and load MXCSR (32-bit) and x87 FCW (16-bit) at their exact
+        // widths to avoid store-to-load forwarding stalls.
+        let mut mxcsr = mem::MaybeUninit::<u32>::uninit();
+        let mut fcw = mem::MaybeUninit::<u16>::uninit();
+        core::arch::asm!(
+            "stmxcsr [{mxcsr}]",
+            "fnstcw [{fcw}]",
+            mxcsr = in(reg) mxcsr.as_mut_ptr(),
+            fcw = in(reg) fcw.as_mut_ptr(),
+            options(nostack, preserves_flags),
+        );
+        Self((mxcsr.assume_init() as u64) | ((fcw.assume_init() as u64) << 32))
+    }
+
+    #[inline(always)]
+    unsafe fn restore_if_changed(self, current: Self) {
+        if ((current.0 ^ self.0) & Self::CONTROL_MASK) != 0 {
+            self.restore();
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    unsafe fn restore(self) {
+        let mxcsr = self.0 as u32;
+        let fcw = (self.0 >> 32) as u16;
+        core::arch::asm!(
+            "ldmxcsr [{mxcsr}]",
+            "fldcw [{fcw}]",
+            mxcsr = in(reg) &mxcsr,
+            fcw = in(reg) &fcw,
+            options(nostack, preserves_flags, readonly),
+        );
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", not(target_feature = "sse")))]
+impl FpControlState {
+    #[inline(always)]
+    unsafe fn read() -> Self {
+        Self(0)
+    }
+
+    #[inline(always)]
+    unsafe fn restore_if_changed(self, _current: Self) {}
+
+    #[cfg(feature = "asm-unwind")]
+    #[inline(always)]
+    unsafe fn restore(self) {}
+}
+
+/// Restores saved FP control state if an `asm-unwind` exception unwinds
+/// directly out of the switch assembly without executing the normal return
+/// path.
+#[cfg(all(target_arch = "x86_64", feature = "asm-unwind"))]
+struct FpUnwindGuard(FpControlState);
+
+#[cfg(all(target_arch = "x86_64", feature = "asm-unwind"))]
+impl Drop for FpUnwindGuard {
+    #[inline(always)]
+    fn drop(&mut self) {
+        unsafe {
+            self.0.restore();
+        }
+    }
+}

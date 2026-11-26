@@ -455,6 +455,280 @@ fn stack_overflow() {
     println!("Recovered from second stack overflow");
 }
 
+#[cfg(all(target_arch = "x86_64", target_feature = "sse"))]
+mod fp_control_x86_64 {
+    use core::arch::asm;
+
+    use crate::{Coroutine, CoroutineResult};
+
+    const MXCSR_CONTROL_MASK: u32 = !0x3f;
+
+    fn read_mxcsr() -> u32 {
+        let mut val = 0u32;
+        unsafe {
+            asm!(
+                "stmxcsr [{ptr}]",
+                ptr = in(reg) &mut val,
+                options(nostack, preserves_flags),
+            );
+        }
+        val
+    }
+
+    fn write_mxcsr(val: u32) {
+        unsafe {
+            asm!(
+                "ldmxcsr [{ptr}]",
+                ptr = in(reg) &val,
+                options(nostack, preserves_flags, readonly),
+            );
+        }
+    }
+
+    fn read_fcw() -> u16 {
+        let mut val = 0u16;
+        unsafe {
+            asm!(
+                "fnstcw [{ptr}]",
+                ptr = in(reg) &mut val,
+                options(nostack, preserves_flags),
+            );
+        }
+        val
+    }
+
+    fn write_fcw(val: u16) {
+        unsafe {
+            asm!(
+                "fldcw [{ptr}]",
+                ptr = in(reg) &val,
+                options(nostack, preserves_flags, readonly),
+            );
+        }
+    }
+
+    struct RestoreFp(u32, u16);
+
+    impl RestoreFp {
+        fn save() -> Self {
+            Self(read_mxcsr(), read_fcw())
+        }
+    }
+
+    impl Drop for RestoreFp {
+        fn drop(&mut self) {
+            write_mxcsr(self.0);
+            write_fcw(self.1);
+        }
+    }
+
+    #[test]
+    fn mxcsr_and_fcw_preserved_across_switches() {
+        let _restore = RestoreFp::save();
+        let orig_mxcsr = read_mxcsr();
+        let orig_fcw = read_fcw();
+
+        // Toggle MXCSR rounding control bits (13..=14) and x87 FCW rounding
+        // control bits (10..=11).
+        let coro_mxcsr = orig_mxcsr ^ 0x2000;
+        let coro_mxcsr_return = orig_mxcsr ^ 0x6000;
+        let parent_mxcsr = orig_mxcsr ^ 0x4000;
+
+        let coro_fcw = orig_fcw ^ 0x0400;
+        let coro_fcw_return = orig_fcw ^ 0x0c00;
+        let parent_fcw = orig_fcw ^ 0x0800;
+
+        let mut coroutine = Coroutine::new(move |yielder, ()| {
+            write_mxcsr(coro_mxcsr);
+            write_fcw(coro_fcw);
+            yielder.suspend(());
+
+            // Coroutine must retain its own MXCSR and FCW across suspend/resume
+            // even though the parent modified both while suspended.
+            assert_eq!(
+                read_mxcsr() & MXCSR_CONTROL_MASK,
+                coro_mxcsr & MXCSR_CONTROL_MASK,
+                "coroutine MXCSR control bits were not preserved across suspend/resume",
+            );
+            assert_eq!(
+                read_fcw(),
+                coro_fcw,
+                "coroutine x87 FCW was not preserved across suspend/resume",
+            );
+
+            // Modify both again before returning to verify switch_and_reset
+            // does not leak into the parent.
+            write_mxcsr(coro_mxcsr_return);
+            write_fcw(coro_fcw_return);
+        });
+
+        assert_eq!(coroutine.resume(()), CoroutineResult::Yield(()));
+        assert_eq!(
+            read_mxcsr() & MXCSR_CONTROL_MASK,
+            orig_mxcsr & MXCSR_CONTROL_MASK,
+            "coroutine MXCSR leaked to parent on yield",
+        );
+        assert_eq!(
+            read_fcw(),
+            orig_fcw,
+            "coroutine x87 FCW leaked to parent on yield",
+        );
+
+        write_mxcsr(parent_mxcsr);
+        write_fcw(parent_fcw);
+
+        assert_eq!(coroutine.resume(()), CoroutineResult::Return(()));
+        assert_eq!(
+            read_mxcsr() & MXCSR_CONTROL_MASK,
+            parent_mxcsr & MXCSR_CONTROL_MASK,
+            "coroutine MXCSR leaked to parent on return",
+        );
+        assert_eq!(
+            read_fcw(),
+            parent_fcw,
+            "coroutine x87 FCW leaked to parent on return",
+        );
+    }
+
+    #[test]
+    fn mxcsr_and_fcw_isolated_between_coroutines() {
+        let _restore = RestoreFp::save();
+        let orig_mxcsr = read_mxcsr();
+        let orig_fcw = read_fcw();
+
+        let a_mxcsr = orig_mxcsr ^ 0x2000;
+        let b_mxcsr = orig_mxcsr ^ 0x4000;
+        let a_fcw = orig_fcw ^ 0x0400;
+        let b_fcw = orig_fcw ^ 0x0800;
+
+        let mut coro_a = Coroutine::new(move |yielder, ()| {
+            write_mxcsr(a_mxcsr);
+            write_fcw(a_fcw);
+            yielder.suspend(());
+            assert_eq!(
+                read_mxcsr() & MXCSR_CONTROL_MASK,
+                a_mxcsr & MXCSR_CONTROL_MASK
+            );
+            assert_eq!(read_fcw(), a_fcw);
+        });
+
+        let mut coro_b = Coroutine::new(move |yielder, ()| {
+            assert_eq!(
+                read_mxcsr() & MXCSR_CONTROL_MASK,
+                orig_mxcsr & MXCSR_CONTROL_MASK
+            );
+            assert_eq!(read_fcw(), orig_fcw);
+            write_mxcsr(b_mxcsr);
+            write_fcw(b_fcw);
+            yielder.suspend(());
+            assert_eq!(
+                read_mxcsr() & MXCSR_CONTROL_MASK,
+                b_mxcsr & MXCSR_CONTROL_MASK
+            );
+            assert_eq!(read_fcw(), b_fcw);
+        });
+
+        assert_eq!(coro_a.resume(()), CoroutineResult::Yield(()));
+        assert_eq!(
+            read_mxcsr() & MXCSR_CONTROL_MASK,
+            orig_mxcsr & MXCSR_CONTROL_MASK
+        );
+        assert_eq!(read_fcw(), orig_fcw);
+
+        assert_eq!(coro_b.resume(()), CoroutineResult::Yield(()));
+        assert_eq!(
+            read_mxcsr() & MXCSR_CONTROL_MASK,
+            orig_mxcsr & MXCSR_CONTROL_MASK
+        );
+        assert_eq!(read_fcw(), orig_fcw);
+
+        assert_eq!(coro_a.resume(()), CoroutineResult::Return(()));
+        assert_eq!(
+            read_mxcsr() & MXCSR_CONTROL_MASK,
+            orig_mxcsr & MXCSR_CONTROL_MASK
+        );
+        assert_eq!(read_fcw(), orig_fcw);
+
+        assert_eq!(coro_b.resume(()), CoroutineResult::Return(()));
+        assert_eq!(
+            read_mxcsr() & MXCSR_CONTROL_MASK,
+            orig_mxcsr & MXCSR_CONTROL_MASK
+        );
+        assert_eq!(read_fcw(), orig_fcw);
+    }
+
+    #[cfg(feature = "unwind")]
+    #[test]
+    fn mxcsr_and_fcw_preserved_on_panic_and_force_unwind() {
+        extern crate std;
+        use std::cell::Cell;
+        use std::panic::{self, AssertUnwindSafe};
+        use std::rc::Rc;
+
+        let _restore = RestoreFp::save();
+        let orig_mxcsr = read_mxcsr();
+        let orig_fcw = read_fcw();
+
+        let coro_mxcsr = orig_mxcsr ^ 0x2000;
+        let coro_fcw = orig_fcw ^ 0x0400;
+        let parent_mxcsr = orig_mxcsr ^ 0x4000;
+        let parent_fcw = orig_fcw ^ 0x0800;
+
+        // Panic inside coroutine must not leak coroutine's FP control state to caller.
+        let mut panicking = Coroutine::<(), (), ()>::new(move |_, ()| {
+            write_mxcsr(coro_mxcsr);
+            write_fcw(coro_fcw);
+            panic!("fp panic");
+        });
+        assert!(panic::catch_unwind(AssertUnwindSafe(|| panicking.resume(()))).is_err());
+        assert_eq!(
+            read_mxcsr() & MXCSR_CONTROL_MASK,
+            orig_mxcsr & MXCSR_CONTROL_MASK
+        );
+        assert_eq!(read_fcw(), orig_fcw);
+
+        // Forced unwind must run coroutine destructors with coroutine's FP control
+        // state and restore the parent's FP control state afterwards.
+        struct RecordOnDrop(Rc<Cell<Option<(u32, u16)>>>);
+        impl Drop for RecordOnDrop {
+            fn drop(&mut self) {
+                self.0
+                    .set(Some((read_mxcsr() & MXCSR_CONTROL_MASK, read_fcw())));
+            }
+        }
+
+        let observed_in_drop = Rc::new(Cell::new(None));
+        let drop_guard = RecordOnDrop(observed_in_drop.clone());
+        let mut suspended = Coroutine::<(), (), ()>::new(move |yielder, ()| {
+            let _guard = drop_guard;
+            write_mxcsr(coro_mxcsr);
+            write_fcw(coro_fcw);
+            yielder.suspend(());
+        });
+
+        assert_eq!(suspended.resume(()), CoroutineResult::Yield(()));
+        write_mxcsr(parent_mxcsr);
+        write_fcw(parent_fcw);
+
+        suspended.force_unwind();
+        assert_eq!(
+            observed_in_drop.get(),
+            Some((coro_mxcsr & MXCSR_CONTROL_MASK, coro_fcw)),
+            "coroutine destructor did not run with coroutine's FP control state",
+        );
+        assert_eq!(
+            read_mxcsr() & MXCSR_CONTROL_MASK,
+            parent_mxcsr & MXCSR_CONTROL_MASK,
+            "parent MXCSR was not preserved across force_unwind",
+        );
+        assert_eq!(
+            read_fcw(),
+            parent_fcw,
+            "parent x87 FCW was not preserved across force_unwind",
+        );
+    }
+}
+
 /// Helper module for setting up a trap handler.
 mod trap_handler {
     extern crate std;

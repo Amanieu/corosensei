@@ -109,7 +109,9 @@
 
 use core::arch::{asm, global_asm};
 
-use super::{allocate_obj_on_stack, push};
+#[cfg(feature = "asm-unwind")]
+use super::FpUnwindGuard;
+use super::{allocate_obj_on_stack, push, FpControlState};
 use crate::coroutine::adjusted_stack_base;
 use crate::stack::{Stack, StackPointer, StackTebFields};
 use crate::unwind::{
@@ -330,6 +332,8 @@ pub unsafe fn switch_and_link(
     stack_base: StackPointer,
 ) -> (EncodedValue, Option<StackPointer>) {
     let (ret_val, ret_sp);
+    let saved_fp = FpControlState::read();
+    let returned_fp: u64;
 
     asm_may_unwind_root!(
         // Set up a secondary copy of the return address. This is only used by
@@ -384,10 +388,16 @@ pub unsafe fn switch_and_link(
         // We pass the target stack pointer in RDX.
         in("rdx") sp.get() as u64,
 
+        // Pass our current FP control state in R8 and receive the coroutine's
+        // FP control state back in R8 on yield or return.
+        inlateout("r8") saved_fp.0 => returned_fp,
+
         // Mark all registers as clobbered.
         lateout("r12") _, lateout("r13") _, lateout("r14") _, lateout("r15") _,
         clobber_abi("sysv64"),
     );
+
+    saved_fp.restore_if_changed(FpControlState(returned_fp));
 
     (ret_val, StackPointer::new(ret_sp))
 }
@@ -395,6 +405,10 @@ pub unsafe fn switch_and_link(
 #[inline(always)]
 pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) -> EncodedValue {
     let ret_val;
+    let saved_fp = FpControlState::read();
+    let returned_fp: u64;
+    #[cfg(feature = "asm-unwind")]
+    let fp_guard = FpUnwindGuard(saved_fp);
 
     asm_may_unwind_yield!(
         // Save the TEB fields to the stack.
@@ -461,16 +475,26 @@ pub unsafe fn switch_yield(arg: EncodedValue, parent_link: *mut StackPointer) ->
         // here.
         in("rdx") parent_link as u64,
 
+        // Pass our current FP control state in R8 and receive the parent's
+        // FP control state back in R8 on resume.
+        inlateout("r8") saved_fp.0 => returned_fp,
+
         // Mark all registers as clobbered.
         lateout("r12") _, lateout("r13") _, lateout("r14") _, lateout("r15") _,
         clobber_abi("sysv64"),
     );
+
+    #[cfg(feature = "asm-unwind")]
+    core::mem::forget(fp_guard);
+    saved_fp.restore_if_changed(FpControlState(returned_fp));
 
     ret_val
 }
 
 #[inline(always)]
 pub unsafe fn switch_and_reset(arg: EncodedValue, parent_link: *mut StackPointer) -> ! {
+    let cur_fp = FpControlState::read().0;
+
     asm!(
         // Write the 2 TEB fields which can change during corountine execution
         // to the base of the stack. This is later recovered by
@@ -496,6 +520,9 @@ pub unsafe fn switch_and_reset(arg: EncodedValue, parent_link: *mut StackPointer
         // coroutine is done.
         in("rsi") 0,
 
+        // Pass our current FP control state back to switch_and_link().
+        in("r8") cur_fp,
+
         options(noreturn),
     );
 }
@@ -514,6 +541,8 @@ pub unsafe fn switch_and_throw(
     }
 
     let (ret_val, ret_sp);
+    let saved_fp = FpControlState::read();
+    let returned_fp: u64;
 
     asm_may_unwind_root!(
         // Save state just like the first half of switch_and_link().
@@ -580,6 +609,7 @@ pub unsafe fn switch_and_throw(
         // Same output registers as switch_and_link().
         lateout("rdi") ret_val,
         lateout("rsi") ret_sp,
+        lateout("r8") returned_fp,
 
         // Stack pointer and stack base inputs for stack switching.
         in("rsi") stack_base.get() as u64,
@@ -589,6 +619,8 @@ pub unsafe fn switch_and_throw(
         lateout("r12") _, lateout("r13") _, lateout("r14") _, lateout("r15") _,
         clobber_abi("sysv64"),
     );
+
+    saved_fp.restore_if_changed(FpControlState(returned_fp));
 
     (ret_val, StackPointer::new(ret_sp))
 }
