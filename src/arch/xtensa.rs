@@ -120,7 +120,7 @@
 //! +-----------------+
 //! ```
 
-use core::arch::asm;
+use core::arch::{asm, global_asm};
 
 use super::allocate_obj_on_stack;
 use crate::coroutine::adjusted_stack_base;
@@ -153,200 +153,178 @@ const SWITCH_FRAME_SIZE: usize = 64;
 // parent's call to stack_switch_link, just below the parent link.
 const PARENT_PC_OFFSET: usize = PARENT_LINK_OFFSET + 4;
 
-// All of the assembly routines below are emitted from a single inline `asm!`
-// block into their own text section, rather than with `global_asm!`.
-//
-// Rust <= 1.98 (LLVM <= 22) parses module-level assembly (`global_asm!` and
-// naked functions) without the target's features in optimized builds with
-// multiple codegen units, as part of local ThinLTO. On Xtensa this rejects not
-// only FPU and other optional instructions but also the windowed ABI
-// instructions themselves (`entry`, `retw`, `callN`, ...). Inline assembly is
-// always assembled with the target features of the enclosing function.
-//
-// This function is never called. It only needs to be emitted once, which is
-// guaranteed by it being non-generic, never inlined and kept alive by the
-// `#[used]` static below. This is also why named labels are acceptable here.
-#[inline(never)]
-#[allow(named_asm_labels)]
-unsafe extern "C" fn asm_routines() {
-    asm!(
-        ".pushsection .text.corosensei_xtensa,\"ax\",@progbits",
-        // Switches to another stack. Called with call4 from inline assembly.
-        //
-        // Inputs:
-        // - a2: Value passed through to the target context.
-        // - a3: The caller's a7, which is preserved for the current context
-        //       and restored for the target context.
-        // - a4: Target stack pointer, as returned by a previous switch or by
-        //       init_stack().
-        // - a5 (stack_switch): Value returned to the target context in a4.
-        // - a5 (stack_switch_link): Address of the parent PC slot just below
-        //       the parent link. The return address is stored in the parent
-        //       PC slot and the current stack pointer in the parent link.
-        //
-        // Outputs (in the target context):
-        // - a2: Value passed from the context which switched to us.
-        // - a4: Value of a5 in the context which switched to us.
-        ".balign 4",
-        asm_function_begin!("stack_switch_link"),
-        concat!("entry a1, ", switch_frame_size!()),
-        "s32i a0, a5, 0",
-        "s32i a1, a5, 4",
-        "j 0f",
-        asm_function_end!("stack_switch_link"),
-        ".balign 4",
-        asm_function_begin!("stack_switch"),
-        concat!("entry a1, ", switch_frame_size!()),
-        "0:",
-        // Save the return address and the caller's a7.
-        "s32i a0, a1, 0",
-        "s32i a3, a1, 4",
-        // Spill all live register windows other than ours to the stack. This
-        // preserves a0-a11.
-        concat!("call12 ", asm_mangle!("stack_window_spill")),
-        // All suspended contexts are stopped here, which is used as the PC of
-        // the parent frame in coroutine backtraces.
-        asm_function_alt_entry!("stack_switch_suspended"),
-        // Switch to the target stack and load its saved registers.
-        "mov a1, a4",
-        "l32i a0, a1, 0",
-        "l32i a3, a1, 4",
-        "mov a4, a5",
-        // Return into the target context. Our caller's window is not live (it
-        // was either spilled above or belongs to another context), so this
-        // triggers a window underflow which restores the caller's a0-a3 from
-        // the 16 bytes below our new stack pointer.
-        "retw",
-        asm_function_end!("stack_switch"),
-        // Spills all live register windows except the caller's to the stack.
-        // Must be called with call12, and preserves the caller's a0-a11.
-        //
-        // Each call12 + entry rotates the window by 3 positions (12 registers)
-        // and checks that the 3 positions after the caller's window are free,
-        // causing a window overflow for any live frame there. After 4 levels
-        // the innermost function references a15, which checks the 3 positions
-        // after its own window. This covers the 15 positions after the caller's
-        // window. Each level reserves the standard base save area plus a
-        // call12 extra save area.
-        ".balign 4",
-        asm_function_begin!("stack_window_spill"),
-        "entry a1, 48",
-        "call12 1f",
-        "retw",
-        ".balign 4",
-        "1:",
-        "entry a1, 48",
-        "call12 2f",
-        "retw",
-        ".balign 4",
-        "2:",
-        "entry a1, 48",
-        "call12 3f",
-        "retw",
-        ".balign 4",
-        "3:",
-        "entry a1, 16",
-        "mov a15, a15",
-        "retw",
-        asm_function_end!("stack_window_spill"),
-        // This is entered by the retw in stack_switch the first time a
-        // coroutine is resumed, due to the initial state set up by
-        // init_stack(). It is not a real function since it doesn't have an
-        // entry instruction: it continues the frame whose a0-a3 were reloaded
-        // from the base save area by the window underflow.
-        //
-        // At this point our register state contains the following:
-        // - a1 points to the initial object, below the parent link.
-        // - a2 contains the initial function.
-        // - a6 contains the argument passed from switch_and_link.
-        // - a7 points to the parent link.
-        ".balign 4",
-        asm_function_begin!("stack_init_trampoline"),
-        // Call the initial function with the argument, parent link and initial
-        // object. call4 maps our a6-a8 to the callee's a2-a4. Using call4
-        // instead of call8 means that this frame doesn't need an extra save
-        // area.
-        "mov a8, a1",
-        "callx4 a2",
-        // The initial function never returns.
-        asm_function_alt_entry!("stack_init_trampoline_return"),
-        "ill",
-        asm_function_end!("stack_init_trampoline"),
-        // This function calls a function pointer on a new stack and restores
-        // the original stack upon returning. It is used by on_stack() and is
-        // much simpler than the full coroutine logic, but also more limited
-        // since yielding is not possible.
-        //
-        // Called with call4 from inline assembly:
-        // - a2: Argument to pass to the function.
-        // - a3: The caller's a7, which is preserved.
-        // - a4: Base of the new stack.
-        // - a5: Function to call.
-        ".balign 4",
-        asm_function_begin!("stack_call_trampoline"),
-        concat!("entry a1, ", switch_frame_size!()),
-        // We are about to change a1, so the caller's registers must be spilled
-        // to the base save area below our current stack pointer first.
-        // Otherwise a window overflow would later store them relative to the
-        // new stack pointer and the underflow upon returning would read them
-        // from the old one.
-        concat!("call12 ", asm_mangle!("stack_window_spill")),
-        // Copy the caller's a0 and a1 from our base save area to the base save
-        // area below the new stack. Backtraces taken on the new stack then
-        // continue with our caller on the original stack.
-        "addi a6, a1, -16",
-        "addi a7, a4, -16",
-        "l32i a8, a6, 0",
-        "s32i a8, a7, 0",
-        "l32i a8, a6, 4",
-        "s32i a8, a7, 4",
-        // Keep the original stack pointer in a2, which is preserved by the
-        // call4.
-        "mov a6, a2",
-        "mov a2, a1",
-        // Switch to the new stack and call the function. Like
-        // stack_init_trampoline, this uses call4 so that this frame doesn't
-        // need an extra save area on the new stack.
-        "mov a1, a4",
-        "callx4 a5",
-        // Switch back to the original stack. Our caller is still spilled, so
-        // the retw reloads it from the base save area below the original
-        // stack pointer.
-        "mov a1, a2",
-        "retw",
-        asm_function_end!("stack_call_trampoline"),
-        // This is entered from a trap handler by returning from the exception
-        // (see setup_trap_trampoline):
-        // - a0: Backtrace link (see setup_trap_trampoline).
-        // - a1: Stack pointer on the coroutine stack.
-        // - a2: Pointer to the object passed to the handler function.
-        // - a3: Pointer to the parent link.
-        // - a4: Handler function.
-        ".balign 4",
-        asm_function_begin!("stack_trap_trampoline"),
-        // The register windows of all other frames belong to the trapped code
-        // on the coroutine stack, whose memory is now being reused. Discard
-        // them by setting WindowStart to only contain the current window,
-        // rather than spilling them, which would corrupt the reused stack.
-        "rsr.windowbase a5",
-        "movi a6, 1",
-        "ssl a5",
-        "sll a6, a6",
-        "wsr.windowstart a6",
-        "rsync",
-        // Call the handler function with call4 (a6-a7 become a2-a3).
-        "mov a6, a2",
-        "mov a7, a3",
-        "callx4 a4",
-        // The handler function never returns.
-        "ill",
-        asm_function_end!("stack_trap_trampoline"),
-        ".popsection",
-    );
-}
-
-#[used]
-static ASM_ROUTINES: unsafe extern "C" fn() = asm_routines;
+global_asm!(
+    // Switches to another stack. Called with call4 from inline assembly.
+    //
+    // Inputs:
+    // - a2: Value passed through to the target context.
+    // - a3: The caller's a7, which is preserved for the current context
+    //       and restored for the target context.
+    // - a4: Target stack pointer, as returned by a previous switch or by
+    //       init_stack().
+    // - a5 (stack_switch): Value returned to the target context in a4.
+    // - a5 (stack_switch_link): Address of the parent PC slot just below
+    //       the parent link. The return address is stored in the parent
+    //       PC slot and the current stack pointer in the parent link.
+    //
+    // Outputs (in the target context):
+    // - a2: Value passed from the context which switched to us.
+    // - a4: Value of a5 in the context which switched to us.
+    ".balign 4",
+    asm_function_begin!("stack_switch_link"),
+    concat!("entry a1, ", switch_frame_size!()),
+    "s32i a0, a5, 0",
+    "s32i a1, a5, 4",
+    "j 0f",
+    asm_function_end!("stack_switch_link"),
+    ".balign 4",
+    asm_function_begin!("stack_switch"),
+    concat!("entry a1, ", switch_frame_size!()),
+    "0:",
+    // Save the return address and the caller's a7.
+    "s32i a0, a1, 0",
+    "s32i a3, a1, 4",
+    // Spill all live register windows other than ours to the stack. This
+    // preserves a0-a11.
+    concat!("call12 ", asm_mangle!("stack_window_spill")),
+    // All suspended contexts are stopped here, which is used as the PC of
+    // the parent frame in coroutine backtraces.
+    asm_function_alt_entry!("stack_switch_suspended"),
+    // Switch to the target stack and load its saved registers.
+    "mov a1, a4",
+    "l32i a0, a1, 0",
+    "l32i a3, a1, 4",
+    "mov a4, a5",
+    // Return into the target context. Our caller's window is not live (it
+    // was either spilled above or belongs to another context), so this
+    // triggers a window underflow which restores the caller's a0-a3 from
+    // the 16 bytes below our new stack pointer.
+    "retw",
+    asm_function_end!("stack_switch"),
+    // Spills all live register windows except the caller's to the stack.
+    // Must be called with call12, and preserves the caller's a0-a11.
+    //
+    // Each call12 + entry rotates the window by 3 positions (12 registers)
+    // and checks that the 3 positions after the caller's window are free,
+    // causing a window overflow for any live frame there. After 4 levels
+    // the innermost function references a15, which checks the 3 positions
+    // after its own window. This covers the 15 positions after the caller's
+    // window. Each level reserves the standard base save area plus a
+    // call12 extra save area.
+    ".balign 4",
+    asm_function_begin!("stack_window_spill"),
+    "entry a1, 48",
+    "call12 1f",
+    "retw",
+    ".balign 4",
+    "1:",
+    "entry a1, 48",
+    "call12 2f",
+    "retw",
+    ".balign 4",
+    "2:",
+    "entry a1, 48",
+    "call12 3f",
+    "retw",
+    ".balign 4",
+    "3:",
+    "entry a1, 16",
+    "mov a15, a15",
+    "retw",
+    asm_function_end!("stack_window_spill"),
+    // This is entered by the retw in stack_switch the first time a
+    // coroutine is resumed, due to the initial state set up by
+    // init_stack(). It is not a real function since it doesn't have an
+    // entry instruction: it continues the frame whose a0-a3 were reloaded
+    // from the base save area by the window underflow.
+    //
+    // At this point our register state contains the following:
+    // - a1 points to the initial object, below the parent link.
+    // - a2 contains the initial function.
+    // - a6 contains the argument passed from switch_and_link.
+    // - a7 points to the parent link.
+    ".balign 4",
+    asm_function_begin!("stack_init_trampoline"),
+    // Call the initial function with the argument, parent link and initial
+    // object. call4 maps our a6-a8 to the callee's a2-a4. Using call4
+    // instead of call8 means that this frame doesn't need an extra save
+    // area.
+    "mov a8, a1",
+    "callx4 a2",
+    // The initial function never returns.
+    asm_function_alt_entry!("stack_init_trampoline_return"),
+    "ill",
+    asm_function_end!("stack_init_trampoline"),
+    // This function calls a function pointer on a new stack and restores
+    // the original stack upon returning. It is used by on_stack() and is
+    // much simpler than the full coroutine logic, but also more limited
+    // since yielding is not possible.
+    //
+    // Called with call4 from inline assembly:
+    // - a2: Argument to pass to the function.
+    // - a3: The caller's a7, which is preserved.
+    // - a4: Base of the new stack.
+    // - a5: Function to call.
+    ".balign 4",
+    asm_function_begin!("stack_call_trampoline"),
+    concat!("entry a1, ", switch_frame_size!()),
+    // We are about to change a1, so the caller's registers must be spilled
+    // to the base save area below our current stack pointer first.
+    // Otherwise a window overflow would later store them relative to the
+    // new stack pointer and the underflow upon returning would read them
+    // from the old one.
+    concat!("call12 ", asm_mangle!("stack_window_spill")),
+    // Copy the caller's a0 and a1 from our base save area to the base save
+    // area below the new stack. Backtraces taken on the new stack then
+    // continue with our caller on the original stack.
+    "addi a6, a1, -16",
+    "addi a7, a4, -16",
+    "l32i a8, a6, 0",
+    "s32i a8, a7, 0",
+    "l32i a8, a6, 4",
+    "s32i a8, a7, 4",
+    // Keep the original stack pointer in a2, which is preserved by the
+    // call4.
+    "mov a6, a2",
+    "mov a2, a1",
+    // Switch to the new stack and call the function. Like
+    // stack_init_trampoline, this uses call4 so that this frame doesn't
+    // need an extra save area on the new stack.
+    "mov a1, a4",
+    "callx4 a5",
+    // Switch back to the original stack. Our caller is still spilled, so
+    // the retw reloads it from the base save area below the original
+    // stack pointer.
+    "mov a1, a2",
+    "retw",
+    asm_function_end!("stack_call_trampoline"),
+    // This is entered from a trap handler by returning from the exception
+    // (see setup_trap_trampoline):
+    // - a0: Backtrace link (see setup_trap_trampoline).
+    // - a1: Stack pointer on the coroutine stack.
+    // - a2: Pointer to the object passed to the handler function.
+    // - a3: Pointer to the parent link.
+    // - a4: Handler function.
+    ".balign 4",
+    asm_function_begin!("stack_trap_trampoline"),
+    // The register windows of all other frames belong to the trapped code
+    // on the coroutine stack, whose memory is now being reused. Discard
+    // them by setting WindowStart to only contain the current window,
+    // rather than spilling them, which would corrupt the reused stack.
+    "rsr.windowbase a5",
+    "movi a6, 1",
+    "ssl a5",
+    "sll a6, a6",
+    "wsr.windowstart a6",
+    "rsync",
+    // Call the handler function with call4 (a6-a7 become a2-a3).
+    "mov a6, a2",
+    "mov a7, a3",
+    "callx4 a4",
+    // The handler function never returns.
+    "ill",
+    asm_function_end!("stack_trap_trampoline"),
+);
 
 // These functions use a custom calling convention and should only be called
 // with inline assembly or used as addresses.

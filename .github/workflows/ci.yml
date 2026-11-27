@@ -119,7 +119,7 @@ jobs:
     - uses: esp-rs/xtensa-toolchain@v1.7
       with:
         buildtargets: ${{ matrix.chip }}
-        version: 1.97.0.0
+        version: 1.100.0.0
         github-token: ${{ secrets.GITHUB_TOKEN }}
     - name: Install espflash and QEMU
       run: |

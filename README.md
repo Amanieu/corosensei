@@ -97,7 +97,7 @@ Feel free to open an issue if your target is not supported yet.
 
 ### Xtensa
 
-Xtensa targets are not supported by the upstream Rust compiler since its LLVM doesn't include the Xtensa backend. They require the [esp-rs](https://github.com/esp-rs) toolchain (version 1.93 or later), installed with [`espup`](https://github.com/esp-rs/espup), and building `core` from source:
+Xtensa targets are not supported by the upstream Rust compiler since its LLVM doesn't include the Xtensa backend. They require the [esp-rs](https://github.com/esp-rs) toolchain (version 1.100 or later), installed with [`espup`](https://github.com/esp-rs/espup), and building `core` from source:
 
 ```sh
 espup install
