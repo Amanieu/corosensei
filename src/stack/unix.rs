@@ -35,8 +35,12 @@ impl DefaultStack {
             & !(page_size - 1);
 
         // OpenBSD requires MAP_STACK on anything that is used as a stack.
+        //
+        // On Linux (6.8+), MAP_STACK excludes the mapping from transparent huge
+        // pages, so a stack that only uses a few KiB doesn't commit a whole 2 MiB
+        // huge page. Older kernels ignore the flag.
         cfg_if::cfg_if! {
-            if #[cfg(target_os = "openbsd")] {
+            if #[cfg(any(target_os = "openbsd", target_os = "linux"))] {
                 let map_flags = libc::MAP_ANONYMOUS | libc::MAP_PRIVATE | libc::MAP_STACK;
             } else {
                 let map_flags = libc::MAP_ANONYMOUS | libc::MAP_PRIVATE;
