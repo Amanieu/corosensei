@@ -102,7 +102,7 @@ Xtensa targets are not supported by the upstream Rust compiler since its LLVM do
 ```sh
 espup install
 . ~/export-esp.sh
-cargo +esp build -Zbuild-std=core --target xtensa-esp32s3-none-elf
+cargo +esp build -Zbuild-std=core --target xtensa-esp32s3-none-elf --no-default-features
 ```
 
 Use `corosensei = { version = "...", default-features = false }` on bare-metal targets: `default-stack` and `unwind` require `std`. The ESP-IDF targets (`xtensa-*-espidf`) do provide `std`, but `DefaultStack` isn't available there since ESP-IDF has no `mmap`. Use your own `Stack` implementation instead.
