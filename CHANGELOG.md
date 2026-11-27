@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5](https://github.com/Amanieu/corosensei/compare/v0.3.4...v0.3.5) - 2026-11-27
+
+### Other
+
+- Pass `MAP_STACK` on Linux to avoid transparent huge pages on stacks ([#92](https://github.com/Amanieu/corosensei/pull/92))
+- Fix CI ([#82](https://github.com/Amanieu/corosensei/pull/82))
+- Fix clobbers on Arm to preserve d8-d15 on targets without NEON ([#80](https://github.com/Amanieu/corosensei/pull/80))
+
 ## [0.3.4](https://github.com/Amanieu/corosensei/compare/v0.3.3...v0.3.4) - 2026-05-24
 
 ### Added
