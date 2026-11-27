@@ -116,10 +116,13 @@ jobs:
       ESPFLASH_SKIP_UPDATE_CHECK: "true"
     steps:
     - uses: actions/checkout@v4
+    # The released esp-hal and xtensa-lx-rt crates don't support esp-rs 1.99 and
+    # later (esp-rs/rust#287), so the tests run on 1.98, and corosensei itself is
+    # built with the latest toolchain afterwards.
     - uses: esp-rs/xtensa-toolchain@v1.7
       with:
         buildtargets: ${{ matrix.chip }}
-        version: 1.100.0.0
+        version: 1.98.1.0
         github-token: ${{ secrets.GITHUB_TOKEN }}
     - name: Install espflash and QEMU
       run: |
@@ -128,9 +131,6 @@ jobs:
         unzip /tmp/espflash.zip -d ~/.cargo/bin
         curl -sSfL https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20260417/qemu-xtensa-softmmu-esp_develop_9.2.2_20260417-x86_64-linux-gnu.tar.xz | tar -xJ -C ~
         echo ~/qemu/bin >> $GITHUB_PATH
-    - name: Build for ESP-IDF (std)
-      if: matrix.chip == 'esp32s3'
-      run: cargo +esp build -Zbuild-std=std,panic_abort --target xtensa-esp32s3-espidf --profile ${{ matrix.profile }} --no-default-features --features unwind
     - name: Test
       working-directory: ci/xtensa
       run: |
@@ -139,3 +139,13 @@ jobs:
           espflash save-image --chip ${{ matrix.chip }} --merge --flash-size 4mb $OUT/corosensei-xtensa-tests flash.bin
           timeout 900 qemu-system-xtensa -nographic -semihosting -machine ${{ matrix.chip }} -drive file=flash.bin,if=mtd,format=raw
         fi
+    - uses: esp-rs/xtensa-toolchain@v1.7
+      with:
+        buildtargets: ${{ matrix.chip }}
+        version: 1.100.0.0
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Build with the latest toolchain
+      run: cargo +esp build -Zbuild-std=core --target $TARGET --profile ${{ matrix.profile }} --no-default-features
+    - name: Build for ESP-IDF (std)
+      if: matrix.chip == 'esp32s3'
+      run: cargo +esp build -Zbuild-std=std,panic_abort --target xtensa-esp32s3-espidf --profile ${{ matrix.profile }} --no-default-features --features unwind

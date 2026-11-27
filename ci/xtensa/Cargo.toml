@@ -25,3 +25,6 @@ esp32s3 = ["esp-hal/esp32s3", "esp-backtrace/esp32s3", "esp-bootloader-esp-idf/e
 
 [profile.release]
 debug = true
+# esp-rs 1.98 and earlier assemble global_asm without the target features when
+# there are multiple codegen units in optimized builds.
+codegen-units = 1
