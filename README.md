@@ -87,10 +87,34 @@ This crate currently supports the following targets:
 | RISC-V      | ✅                                 | ❌                        | ❌       | ❌             |
 | LoongArch64 | ✅                                 | ❌                        | ❌       | ❌             |
 | PowerPC64   | ✅                                 | ❌                        | ❌       | ❌             |
+| Xtensa      | ✅†                                | ❌                        | ❌       | ❌             |
 
 \* Linked backtraces are not supported on x86 Windows.
 
+† Espressif ESP32, ESP32-S2 and ESP32-S3 (`xtensa-esp32-none-elf`, `xtensa-esp32s2-none-elf`, `xtensa-esp32s3-none-elf`, and the ESP-IDF `xtensa-*-espidf` targets). Requires the esp-rs toolchain, see [Xtensa](#xtensa) below.
+
 Feel free to open an issue if your target is not supported yet.
+
+### Xtensa
+
+Xtensa targets are not supported by the upstream Rust compiler since its LLVM doesn't include the Xtensa backend. They require the [esp-rs](https://github.com/esp-rs) toolchain (version 1.100 or later), installed with [`espup`](https://github.com/esp-rs/espup), and building `core` from source:
+
+```sh
+espup install
+. ~/export-esp.sh
+cargo +esp build -Zbuild-std=core --target xtensa-esp32s3-none-elf --no-default-features
+```
+
+Use `corosensei = { version = "...", default-features = false }` on bare-metal targets: `default-stack` and `unwind` require `std`. The ESP-IDF targets (`xtensa-*-espidf`) do provide `std`, but `DefaultStack` isn't available there since ESP-IDF has no `mmap`. Use your own `Stack` implementation instead.
+
+Known limitations on Xtensa:
+
+- All Xtensa targets are `panic = "abort"`. Panics can't be propagated out of a coroutine, and a suspended coroutine can't be unwound when dropped. Use `Coroutine::force_reset` for coroutines that have nothing to drop on their stack. The `asm-unwind` feature is not supported.
+- Linked backtraces work with stack walkers based on the windowed ABI's register save areas, such as `esp-backtrace` and ESP-IDF's backtrace. DWARF CFI is not used.
+- Context switches must not be performed from interrupt or exception handlers, where window overflow exceptions are disabled.
+- Only the registers of the Xtensa ABI are switched. The ESP32-S3 vector extension (`q0`-`q7`, `ACCX`, ...) state and the FPU control/status registers `FCR`/`FSR` are shared between coroutines, like other global state.
+
+The Xtensa tests in [`ci/xtensa`](ci/xtensa/src/main.rs) run under Espressif's QEMU fork in CI.
 
 ## Features
 

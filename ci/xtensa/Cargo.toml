@@ -1,0 +1,30 @@
+[package]
+name = "corosensei-xtensa-tests"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone test runner, not part of the corosensei package.
+[workspace]
+
+[dependencies]
+corosensei = { path = "../..", default-features = false }
+# esp-hal >= 1.1 waits for the ESP32-S3 BBPLL calibration to complete during
+# init, which Espressif's QEMU doesn't emulate. Stay on the 1.0 release train.
+esp-hal = { version = "=1.0.0", features = ["unstable"] }
+esp-alloc = "=0.9.0"
+esp-backtrace = { version = "=0.18.1", features = ["panic-handler", "println", "custom-halt"] }
+esp-bootloader-esp-idf = "=0.4.0"
+esp-println = { version = "=0.16.1", default-features = false, features = ["uart", "critical-section"] }
+xtensa-lx-rt = "=0.21.0"
+
+[features]
+esp32 = ["esp-hal/esp32", "esp-backtrace/esp32", "esp-bootloader-esp-idf/esp32", "esp-println/esp32", "esp-alloc/esp32"]
+esp32s2 = ["esp-hal/esp32s2", "esp-backtrace/esp32s2", "esp-bootloader-esp-idf/esp32s2", "esp-println/esp32s2", "esp-alloc/esp32s2"]
+esp32s3 = ["esp-hal/esp32s3", "esp-backtrace/esp32s3", "esp-bootloader-esp-idf/esp32s3", "esp-println/esp32s3", "esp-alloc/esp32s3"]
+
+[profile.release]
+debug = true
+# esp-rs 1.98 and earlier assemble global_asm without the target features when
+# there are multiple codegen units in optimized builds.
+codegen-units = 1

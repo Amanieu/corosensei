@@ -80,8 +80,12 @@
 //! | RISC-V      | ✅                                | ❌                       | ❌      |
 //! | LoongArch64 | ✅                                | ❌                       | ❌      |
 //! | PowerPC64   | ✅                                | ❌                       | ❌      |
+//! | Xtensa      | ✅†                               | ❌                       | ❌      |
 //!
 //! *\* Linked backtraces are not supported on x86 Windows.*
+//!
+//! *† ESP32, ESP32-S2 and ESP32-S3 with the esp-rs toolchain. See the README for
+//! requirements and limitations.*
 //!
 //! Feel free to open an issue if your target is not supported yet.
 //!
@@ -237,7 +241,10 @@
 
 #![no_std]
 #![cfg_attr(feature = "asm-unwind", feature(asm_unwind))]
-#![cfg_attr(target_arch = "powerpc64", feature(asm_experimental_arch))]
+#![cfg_attr(
+    any(target_arch = "powerpc64", target_arch = "xtensa"),
+    feature(asm_experimental_arch)
+)]
 #![warn(missing_docs)]
 
 // Must come first because it defines macros used by other modules.
